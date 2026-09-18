@@ -20,6 +20,7 @@ import { renderPng, renderSvg } from './render';
 import {
   DEFAULT_SPEC,
   NUMBER_RULES,
+  layerSpec,
   resolveSpec,
   specSchema,
   validateSpec,
@@ -146,7 +147,26 @@ async function runRender(argv: string[], json: boolean): Promise<void> {
   for (const key of Object.keys(fromFlags))
     if (fromFlags[key] === undefined) delete fromFlags[key];
 
-  const candidate = { ...fromConfig, ...fromFlags };
+  // Validate each source before layering, so an unknown preset in the config
+  // file or an out-of-range flag is reported against the right input.
+  for (const [label, source] of [
+    ['config', fromConfig],
+    ['flags', fromFlags],
+  ] as const) {
+    const errors = validateSpec({ icon: 'x:x', ...source }).filter(
+      (e) => e.path !== 'icon',
+    );
+    if (errors.length > 0) {
+      const detail = errors
+        .map((e) => `${e.path || 'spec'}: ${e.message}`)
+        .join('; ');
+      fail(`invalid ${label}: ${detail}`, 'just-logo schema', 2);
+    }
+  }
+  const candidate = layerSpec(
+    fromConfig as Partial<LogoSpec>,
+    fromFlags as Partial<LogoSpec>,
+  );
   if (candidate.icon === undefined) {
     fail(
       '--icon is required (or an "icon" in --config)',

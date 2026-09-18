@@ -4,6 +4,7 @@ import { PRESETS } from '@/lib/constants';
 import {
   DEFAULT_SPEC,
   NUMBER_RULES,
+  layerSpec,
   resolveSpec,
   specSchema,
   validateSpec,
@@ -51,6 +52,36 @@ describe('spec schema (AC8)', () => {
   it('rejects non-objects', () => {
     expect(validateSpec([])).toHaveLength(1);
     expect(validateSpec('x')).toHaveLength(1);
+  });
+});
+
+describe('layerSpec', () => {
+  it('orders defaults < config preset < config values < flag preset < flag values', () => {
+    const layered = layerSpec(
+      {
+        icon: 'lucide:star',
+        preset: 'Dark Mode',
+        strokeColor: '#111',
+        size: 50,
+      },
+      { preset: 'Sunset', fillColor: '#222' },
+    );
+    expect(layered.preset).toBe('Sunset');
+    expect(layered.strokeColor).toBe('#ffffff'); // Sunset beats the config colour
+    expect(layered.fillColor).toBe('#222'); // flag value beats Sunset
+    expect(layered.background).toContain('#ff6b6b'); // from Sunset
+    expect(layered.size).toBe(50); // config value survives
+    const full = resolveSpec(layered as Parameters<typeof resolveSpec>[0]);
+    expect(full.rotate).toBe(DEFAULT_SPEC.rotate);
+  });
+
+  it('keeps the config preset when the flags name none', () => {
+    const layered = layerSpec(
+      { icon: 'lucide:star', preset: 'Dark Mode' },
+      { size: 10 },
+    );
+    expect(layered.preset).toBe('Dark Mode');
+    expect(layered.background).toBe('#000000');
   });
 });
 

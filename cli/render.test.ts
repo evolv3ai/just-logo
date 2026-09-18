@@ -56,6 +56,14 @@ describe('parseGradient (AC4)', () => {
     expect(g!.stops.map((s) => s.offset)).toEqual([0, 0.5, 1]);
   });
 
+  it('does not treat Object.prototype keys as side keywords', () => {
+    const g = parseGradient('linear-gradient(constructor, #000, #fff)');
+    expect(g).not.toBeNull();
+    expect(g!.stops).toHaveLength(3); // "constructor" is just an (invalid) colour stop
+    for (const v of [g!.x1, g!.y1, g!.x2, g!.y2])
+      expect(Number.isFinite(v)).toBe(true);
+  });
+
   it('returns null for a plain colour so it passes through untouched', () => {
     expect(parseGradient('#ffffff')).toBeNull();
     expect(parseGradient('rgba(1,2,3,0.4)')).toBeNull();

@@ -198,6 +198,25 @@ export function validateSpec(candidate: unknown): ValidationError[] {
   return errors;
 }
 
+/** The five values a preset sets, or an empty object for an unknown or absent name. */
+export function presetValues(name: string | undefined): Partial<LogoSpec> {
+  const preset = name ? PRESETS.find((p) => p.name === name) : undefined;
+  if (!preset) return {};
+  return {
+    strokeColor: preset.icon.strokeColor,
+    strokeOpacity: preset.icon.strokeOpacity,
+    fillColor: preset.icon.fillColor,
+    background: preset.background.background,
+    borderColor: preset.background.borderColor,
+  };
+}
+
+function defined<T extends object>(obj: T): Partial<T> {
+  return Object.fromEntries(
+    Object.entries(obj).filter(([, v]) => v !== undefined),
+  ) as Partial<T>;
+}
+
 /**
  * Merge defaults, a preset and explicit values into a full spec.
  * Precedence, lowest to highest: defaults, preset, explicit values.
@@ -205,21 +224,35 @@ export function validateSpec(candidate: unknown): ValidationError[] {
 export function resolveSpec(
   partial: Partial<LogoSpec> & { icon: string },
 ): LogoSpec {
-  const presetName = partial.preset;
-  const preset = presetName
-    ? PRESETS.find((p) => p.name === presetName)
-    : undefined;
-  const fromPreset: Partial<LogoSpec> = preset
-    ? {
-        strokeColor: preset.icon.strokeColor,
-        strokeOpacity: preset.icon.strokeOpacity,
-        fillColor: preset.icon.fillColor,
-        background: preset.background.background,
-        borderColor: preset.background.borderColor,
-      }
-    : {};
-  const explicit = Object.fromEntries(
-    Object.entries(partial).filter(([, v]) => v !== undefined),
-  ) as Partial<LogoSpec> & { icon: string };
-  return { ...DEFAULT_SPEC, ...fromPreset, ...explicit };
+  return {
+    ...DEFAULT_SPEC,
+    ...presetValues(partial.preset),
+    ...defined(partial),
+    icon: partial.icon,
+  };
+}
+
+/**
+ * Layer a config file and command-line flags: defaults, the config's preset,
+ * the config's own values, the flags' preset, then the flags' own values.
+ * So `--preset` on the command line overrides colours from the config file,
+ * and a colour flag overrides that preset, which is what "flags override
+ * --config" promises.
+ */
+export function layerSpec(
+  config: Partial<LogoSpec>,
+  flags: Partial<LogoSpec>,
+): Partial<LogoSpec> & { preset?: string } {
+  const c = defined(config);
+  const f = defined(flags);
+  const { preset: configPreset, ...configRest } = c;
+  const { preset: flagPreset, ...flagRest } = f;
+  const preset = flagPreset ?? configPreset;
+  return {
+    ...presetValues(configPreset),
+    ...configRest,
+    ...presetValues(flagPreset),
+    ...flagRest,
+    ...(preset !== undefined ? { preset } : {}),
+  };
 }

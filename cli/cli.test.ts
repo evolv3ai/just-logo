@@ -159,6 +159,54 @@ describe('config file and override (AC5)', () => {
     expect(out.svg).toContain('<svg x="106" y="106" width="300" height="300"');
   });
 
+  it('lets --preset on the command line override colours from the config file', () => {
+    const cfg = path.join(tmp, 'coloured.json');
+    fs.writeFileSync(
+      cfg,
+      JSON.stringify({
+        icon: 'lucide:star',
+        preset: 'Dark Mode',
+        strokeColor: '#123456',
+      }),
+    );
+    // config alone: its explicit colour beats its own preset
+    const a = run(['render', '--config', cfg, '--out', '-', '--json']);
+    expect(JSON.parse(a.stdout).spec.strokeColor).toBe('#123456');
+    // a flag preset beats the config's colour
+    const b = run([
+      'render',
+      '--config',
+      cfg,
+      '--preset',
+      'Sunset',
+      '--out',
+      '-',
+      '--json',
+    ]);
+    const specB = JSON.parse(b.stdout).spec as {
+      strokeColor: string;
+      background: string;
+      preset: string;
+    };
+    expect(specB.preset).toBe('Sunset');
+    expect(specB.strokeColor).toBe('#ffffff');
+    expect(specB.background).toContain('#ff6b6b');
+    // a colour flag beats the flag preset
+    const c = run([
+      'render',
+      '--config',
+      cfg,
+      '--preset',
+      'Sunset',
+      '--stroke-color',
+      '#abcdef',
+      '--out',
+      '-',
+      '--json',
+    ]);
+    expect(JSON.parse(c.stdout).spec.strokeColor).toBe('#abcdef');
+  });
+
   it('rejects an invalid config with exit 2 and a schema hint', () => {
     const cfg = path.join(tmp, 'bad.json');
     fs.writeFileSync(cfg, JSON.stringify({ icon: 'tabler:heart', size: 9999 }));
@@ -223,6 +271,28 @@ describe('json contract (AC7)', () => {
 });
 
 describe('bin shim', () => {
+  it('maps spawn failures and signals to exit 1 and passes child codes through', async () => {
+    const { exitFor } = await import('./bin.mjs');
+    expect(exitFor({ status: 0, signal: null })).toEqual({
+      code: 0,
+      message: null,
+    });
+    expect(exitFor({ status: 2, signal: null }).code).toBe(2);
+    expect(exitFor({ status: null, signal: null }).code).toBe(1); // no status, no signal: still a failure
+    const killed = exitFor({ status: null, signal: 'SIGKILL' });
+    expect(killed.code).toBe(1);
+    expect(killed.message).toMatch(/^error: .*SIGKILL[\s\S]*\nhelp: /);
+    const failed = exitFor({
+      status: null,
+      signal: null,
+      error: new Error('ENOENT'),
+    });
+    expect(failed.code).toBe(1);
+    expect(failed.message).toMatch(
+      /^error: could not start just-logo: ENOENT\nhelp: /,
+    );
+  });
+
   it('runs through cli/bin.mjs from another directory', () => {
     const r = spawnSync(process.execPath, [BIN, 'icons', 'sets', '--json'], {
       cwd: tmp,
@@ -230,6 +300,16 @@ describe('bin shim', () => {
     });
     expect(r.status).toBe(0);
     expect(JSON.parse(r.stdout)).toContain('lucide');
+    expect(r.stderr).not.toMatch(/^(null|error:)/m); // a clean run writes no shim message
+  });
+
+  it('prints usage when invoked with no arguments', () => {
+    const r = spawnSync(process.execPath, [BIN], {
+      cwd: tmp,
+      encoding: 'utf8',
+    });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain('just-logo <command>');
   });
 
   it("resolves relative --config and --out against the caller's directory, not the repo", () => {

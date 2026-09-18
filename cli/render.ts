@@ -67,11 +67,11 @@ export function parseGradient(background: string): Gradient | null {
   if (angleMatch) {
     angle = Number(angleMatch[1]);
     parts.shift();
-  } else if (first in SIDE_ANGLES) {
+  } else if (Object.hasOwn(SIDE_ANGLES, first)) {
     angle = SIDE_ANGLES[first];
     parts.shift();
   }
-  if (parts.length < 2) return null;
+  if (parts.length < 2 || !Number.isFinite(angle)) return null;
 
   const stops = parts.map((part, index) => {
     const stopMatch = /^(.*?)\s+(-?\d+(?:\.\d+)?)%$/.exec(part);
