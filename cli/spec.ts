@@ -27,7 +27,12 @@ export type LogoSpec = {
   pngSize: number;
 };
 
-/** The editor's initial light-mode state (see editor-provider.tsx). */
+/**
+ * The editor's initial state in its light theme (see editor-provider.tsx).
+ * The editor's own defaults follow its theme, and it opens in the dark theme
+ * (white icon on black). The CLI has no theme, so it takes the light values:
+ * black on white.
+ */
 export const DEFAULT_SPEC: Omit<LogoSpec, 'icon'> = {
   size: 128,
   rotate: 0,

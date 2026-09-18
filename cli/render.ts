@@ -342,8 +342,12 @@ export type RenderResult = {
    * only the border colour).
    */
   backgroundApproximated: boolean;
+  /** Why, one entry per cause; empty exactly when backgroundApproximated is false. */
+  approximations: Approximation[];
   gradient: Gradient | null;
 };
+
+export type Approximation = 'radial-geometry' | 'gradient-under-border';
 
 /**
  * Compose the SVG the editor's export zone would contain: a 512x512 canvas,
@@ -353,11 +357,12 @@ export type RenderResult = {
 export function renderSvg(spec: LogoSpec, icon: IconItem): RenderResult {
   const gradient = parseGradient(spec.background);
   const backgroundPassthrough = !gradient && !isPlainColor(spec.background);
-  const backgroundApproximated =
-    (gradient?.kind === 'radial' && gradient.approximated) ||
-    (gradient !== null &&
-      spec.borderWidth > 0 &&
-      !isOpaqueColor(spec.borderColor));
+  const approximations: Approximation[] = [];
+  if (gradient?.kind === 'radial' && gradient.approximated)
+    approximations.push('radial-geometry');
+  if (gradient && spec.borderWidth > 0 && !isOpaqueColor(spec.borderColor))
+    approximations.push('gradient-under-border');
+  const backgroundApproximated = approximations.length > 0;
 
   const bw = spec.borderWidth;
   const outerSide = CANVAS - spec.margin;
@@ -427,7 +432,13 @@ export function renderSvg(spec: LogoSpec, icon: IconItem): RenderResult {
     rect +
     iconSvg +
     `</svg>`;
-  return { svg, backgroundPassthrough, backgroundApproximated, gradient };
+  return {
+    svg,
+    backgroundPassthrough,
+    backgroundApproximated,
+    approximations,
+    gradient,
+  };
 }
 
 /** Rasterise an SVG string to PNG bytes at the given edge length. Loads resvg lazily. */

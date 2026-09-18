@@ -156,6 +156,36 @@ describe('spec schema (AC8)', () => {
     }
   });
 
+  it('bounds every free-text field at 512 characters and rejects empty strings, in the validator and in the schema', () => {
+    const props = specSchema().properties as Record<
+      string,
+      { minLength?: number; maxLength?: number }
+    >;
+    for (const key of [
+      'strokeColor',
+      'fillColor',
+      'background',
+      'borderColor',
+    ] as const) {
+      expect(validateSpec({ icon: 'lucide:rocket', [key]: '' })).toEqual([
+        { path: key, message: 'must be a non-empty string' },
+      ]);
+      expect(
+        validateSpec({ icon: 'lucide:rocket', [key]: 'x'.repeat(512) }),
+      ).toEqual([]);
+      expect(
+        validateSpec({ icon: 'lucide:rocket', [key]: 'x'.repeat(513) }),
+      ).toEqual([{ path: key, message: 'must be at most 512 characters' }]);
+      expect(props[key].minLength, key).toBe(1);
+      expect(props[key].maxLength, key).toBe(512);
+    }
+    // the icon id is bounded too
+    expect(
+      validateSpec({ icon: `lucide:${'x'.repeat(512)}` }).map((e) => e.path),
+    ).toEqual(['icon']);
+    expect(specSchema().properties.icon.maxLength).toBe(512);
+  });
+
   it('rejects non-objects', () => {
     expect(validateSpec([])).toHaveLength(1);
     expect(validateSpec('x')).toHaveLength(1);

@@ -230,9 +230,6 @@ async function runRender(argv: string[], json: boolean): Promise<void> {
     );
   }
 
-  const fromConfig =
-    values.config !== undefined ? readConfig(values.config) : {};
-
   const fromFlags: Record<string, unknown> = {
     icon: values.icon,
     preset: values.preset,
@@ -274,21 +271,23 @@ async function runRender(argv: string[], json: boolean): Promise<void> {
     if (fromFlags[key] === undefined) delete fromFlags[key];
 
   // Validate each source before layering, so an unknown preset in the config
-  // file or an out-of-range flag is reported against the right input.
-  for (const [label, source] of [
-    ['config', fromConfig],
-    ['flags', fromFlags],
-  ] as const) {
-    const errors = validateSpec({ icon: 'x:x', ...source }).filter(
-      (e) => e.path !== 'icon',
-    );
+  // file or an out-of-range flag is reported against the right input. The
+  // flags go first, before the config file is even read: a bad flag is exit 2
+  // whether or not the config exists. The placeholder icon only stands in when
+  // a source names none; a malformed icon is reported against its own source.
+  const checkSource = (label: string, source: Record<string, unknown>) => {
+    const errors = validateSpec({ icon: 'x:x', ...source });
     if (errors.length > 0) {
       const detail = errors
         .map((e) => `${e.path || 'spec'}: ${e.message}`)
         .join('; ');
       fail(`invalid ${label}: ${detail}`, 'just-logo schema', 2);
     }
-  }
+  };
+  checkSource('flags', fromFlags);
+  const fromConfig =
+    values.config !== undefined ? readConfig(values.config) : {};
+  checkSource('config', fromConfig);
   const candidate = layerSpec(
     fromConfig as Partial<LogoSpec>,
     fromFlags as Partial<LogoSpec>,
@@ -321,9 +320,11 @@ async function runRender(argv: string[], json: boolean): Promise<void> {
     process.stderr.write(
       `warning: background "${safe(spec.background)}" is not a colour or a convertible gradient; it was written as-is and may not render\n`,
     );
-  } else if (result.backgroundApproximated) {
+  }
+  // One warning per approximation: a radial gradient under a see-through border gets both.
+  for (const reason of result.approximations) {
     process.stderr.write(
-      result.gradient?.kind === 'radial' && result.gradient.approximated
+      reason === 'radial-geometry'
         ? 'warning: radial gradient approximated: shape, size and position are ignored and negative stop positions are clamped; rendered centred\n'
         : 'warning: gradient approximated: the border colour is not opaque, and the gradient is not repeated under the border as CSS would\n',
     );
@@ -376,6 +377,7 @@ async function runRender(argv: string[], json: boolean): Promise<void> {
     spec,
     backgroundPassthrough: result.backgroundPassthrough,
     backgroundApproximated: result.backgroundApproximated,
+    backgroundApproximations: result.approximations,
     svg: result.svg,
   };
   if (!written) {
@@ -459,11 +461,17 @@ async function main(argv: string[]): Promise<void> {
         return;
       }
       if (sub === 'show') {
-        const [id] = parseBare(
+        const [id, ...extra] = parseBare(
           args,
           true,
           'just-logo icons show lucide:rocket',
         );
+        if (extra.length > 0)
+          fail(
+            `icons show takes one id, got ${extra.length + 1}`,
+            'just-logo icons show lucide:rocket',
+            2,
+          );
         if (!id)
           fail(
             'icons show needs a <set:name> id',
@@ -525,7 +533,9 @@ main(process.argv.slice(2)).catch((error: unknown) => {
   const help = isCli
     ? error.help
     : ambiguous
-      ? 'just-logo render --icon lucide:rocket --rotate=-15  # negative values need the = form'
+      ? process.argv[2] === 'render'
+        ? 'just-logo render --icon lucide:rocket --rotate=-15  # negative values need the = form'
+        : 'just-logo icons search rocket --limit=5  # --limit must be a whole number of 1 or more'
       : 'just-logo --help';
   const code = isCli ? error.code : 1;
   // Node's parseArgs errors carry a stable code; the wording is secondary.

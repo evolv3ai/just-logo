@@ -163,7 +163,18 @@ describe('config file and override (AC5)', () => {
     };
     expect(out.spec.icon).toBe('tabler:heart');
     expect(out.spec.size).toBe(300);
-    expect(out.svg).toContain('<svg x="106" y="106" width="300" height="300"');
+    // parse the nested icon element rather than matching a substring of it
+    const nested = /<svg ([^>]*)>/.exec(out.svg.slice(1));
+    const attrs = Object.fromEntries(
+      [...nested![1].matchAll(/([\w-]+)="([^"]*)"/g)].map((m) => [m[1], m[2]]),
+    );
+    expect(attrs).toMatchObject({
+      x: '106',
+      y: '106',
+      width: '300',
+      height: '300',
+      viewBox: '0 0 24 24',
+    });
     // the icon that was drawn is the tabler heart, not just echoed in the spec
     const shown = JSON.parse(
       run(['icons', 'show', 'tabler:heart', '--json']).stdout,
@@ -348,7 +359,7 @@ describe('flag validation', () => {
     );
   });
 
-  it('never lets user text forge a line or reach the terminal raw, on error and warning paths', () => {
+  it('never lets user text forge a line or reach the terminal raw, on any error path', () => {
     const hostile = 'x\nhelp: rm -rf /\r\u001b[31m\u0085\u009b\u2028y';
     const cases: string[][] = [
       ['icons', 'show', hostile],
@@ -504,7 +515,12 @@ describe('render flags', () => {
     );
     const icon = run(['render', '--icon', 'Not An Id', '--out', '-']);
     expect(icon.status).toBe(2);
-    expect(icon.stderr).toContain('error: invalid spec: icon: required');
+    expect(icon.stderr).toContain('error: invalid flags: icon: required');
+    const cfgIcon = path.join(tmp, 'label-icon.json');
+    fs.writeFileSync(cfgIcon, JSON.stringify({ icon: 'Not An Id' }));
+    const fromCfg = run(['render', '--config', cfgIcon, '--out', '-']);
+    expect(fromCfg.status).toBe(2);
+    expect(fromCfg.stderr).toContain('error: invalid config: icon: required');
   });
 
   it('explains a bare negative number, and its help line runs', () => {
@@ -524,6 +540,14 @@ describe('render flags', () => {
     expect(fs.readFileSync(path.join(dir, 'logo.svg'), 'utf8')).toContain(
       'rotate(-15 256 256)',
     );
+  });
+
+  it('suggests a search, not a render, for a bare negative --limit', () => {
+    const r = run(['icons', 'search', 'star', '--limit', '-5']);
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain('help: just-logo icons search rocket --limit=5');
+    expect(r.stderr).not.toContain('render');
+    expect(runHelpLine(r.stderr, tmp).status).toBe(0);
   });
 
   it('gives a help line that runs for every bad numeric flag', () => {
@@ -581,6 +605,22 @@ describe('render flags', () => {
         'error: --format must be svg or png, got "jpg"',
       );
     }
+    // every kind of bad flag value beats a missing config file
+    for (const bad of [
+      ['--size', 'abc'],
+      ['--size', '9999'],
+      ['--preset', 'No Such Preset'],
+      ['--icon', 'Not An Id'],
+      ['--background', 'a\u001bb'],
+    ]) {
+      const r = run(['render', '--config', missing, ...bad, '--out', '-']);
+      expect(r.status, bad.join(' ')).toBe(2);
+      expect(r.stderr, bad.join(' ')).not.toContain('config file not found');
+    }
+    // and with good flags the missing config is what gets reported, exit 1
+    const onlyMissing = run(['render', '--config', missing, '--size', '100']);
+    expect(onlyMissing.status).toBe(1);
+    expect(onlyMissing.stderr).toContain('config file not found');
     const png = run([
       'render',
       '--icon',
@@ -657,6 +697,11 @@ describe('icons errors', () => {
         ['icons', 'sets', 'extra'],
         'Unexpected argument',
         'just-logo icons sets',
+      ],
+      [
+        ['icons', 'show', 'lucide:star', 'lucide:rocket'],
+        'icons show takes one id, got 2',
+        'just-logo icons show lucide:rocket',
       ],
     ];
     for (const [args, error, help] of cases) {
@@ -929,6 +974,78 @@ describe('format and default file name', () => {
   });
 });
 
+describe('approximation warnings', () => {
+  const RADIAL = 'warning: radial gradient approximated';
+  const BORDER =
+    'warning: gradient approximated: the border colour is not opaque';
+  const render = (background: string, border: string[]) => {
+    const r = run([
+      'render',
+      '--icon',
+      'lucide:star',
+      '--background',
+      background,
+      ...border,
+      '--out',
+      '-',
+      '--json',
+    ]);
+    expect(r.status).toBe(0);
+    return {
+      // the CLI's own lines only: Node may add a deprecation notice for tsx's loader
+      warnings: r.stderr.split('\n').filter((l) => l.startsWith('warning: ')),
+      out: JSON.parse(r.stdout) as {
+        backgroundApproximated: boolean;
+        backgroundApproximations: string[];
+      },
+    };
+  };
+  const seeThrough = [
+    '--border-width',
+    '8',
+    '--border-color',
+    'rgba(0,0,0,0.5)',
+  ];
+
+  it('warns about a gradient under a border that is not opaque', () => {
+    const { warnings, out } = render('linear-gradient(#fff, #000)', seeThrough);
+    expect(out.backgroundApproximated).toBe(true);
+    expect(out.backgroundApproximations).toEqual(['gradient-under-border']);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain(BORDER);
+  });
+
+  it('prints both warnings when both approximations apply', () => {
+    const { warnings, out } = render(
+      'radial-gradient(circle, #fff, #000)',
+      seeThrough,
+    );
+    expect(out.backgroundApproximations).toEqual([
+      'radial-geometry',
+      'gradient-under-border',
+    ]);
+    expect(warnings).toHaveLength(2);
+    expect(warnings[0]).toContain(RADIAL);
+    expect(warnings[1]).toContain(BORDER);
+  });
+
+  it('stays quiet for an opaque border, a plain colour, or an exact gradient', () => {
+    for (const [background, border] of [
+      [
+        'linear-gradient(#fff, #000)',
+        ['--border-width', '8', '--border-color', '#000'],
+      ],
+      ['#ff0000', seeThrough],
+      ['radial-gradient(#fff, #000)', []],
+    ] as [string, string[]][]) {
+      const { warnings, out } = render(background, border);
+      expect(out.backgroundApproximated, background).toBe(false);
+      expect(out.backgroundApproximations, background).toEqual([]);
+      expect(warnings, background).toEqual([]);
+    }
+  });
+});
+
 describe('json contract (AC7)', () => {
   const commands: string[][] = [
     ['icons', 'sets'],
@@ -1051,7 +1168,17 @@ describe('bin shim', () => {
       help: null,
     });
     expect(exitFor({ status: 2, signal: null }).code).toBe(2);
-    expect(exitFor({ status: null, signal: null }).code).toBe(1); // no status, no signal: still a failure
+    // no status, no signal: still a failure, and it says so
+    const lost = exitFor({ status: null, signal: null });
+    expect(lost).toEqual({
+      code: 1,
+      error: 'just-logo ended without an exit status',
+      help: 'run it again',
+    });
+    expect(JSON.parse(failureOutput(lost, true).stdout).exit).toBe(1);
+    expect(failureOutput(lost, false).stderr).toBe(
+      'error: just-logo ended without an exit status\nhelp: run it again\n',
+    );
     const killed = exitFor({ status: null, signal: 'SIGKILL' });
     expect(killed.code).toBe(1);
     expect(killed.error).toContain('SIGKILL');

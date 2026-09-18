@@ -89,7 +89,7 @@ After `pnpm install`, run it as `pnpm logo <command>` (or `npx tsx cli/index.ts`
 
 Two things to know when a program reads the output:
 
-- **Use `pnpm --silent logo ... --json`, not `pnpm logo ... --json`.** Without `--silent`, pnpm prints its own `> just-logo@1.0.0 logo ...` banner on stdout ahead of the JSON. The linked `just-logo` command has no banner.
+- **Use `pnpm --silent logo ... --json`, not `pnpm logo ... --json`.** Without `--silent`, pnpm prints a banner naming the script; pnpm 12 sends it to stderr, older versions to stdout ahead of the JSON. `--silent` removes it on every version. The linked `just-logo` command has no banner.
 - **`pnpm logo` runs in the checkout's root**, so relative `--config` and `--out` paths resolve there. The `just-logo` command resolves them against the directory you are in.
 
 | Command                                                       | What it does                                                                                                                                                                          |
@@ -101,7 +101,7 @@ Two things to know when a program reads the output:
 | `pnpm logo schema`                                            | Print the JSON schema of a render spec.                                                                                                                                               |
 | `pnpm logo render [flags] [--config <file>]`                  | Render a logo. `--out <path>` (default `logo.<format>`; a `.png` extension or `--format png` selects PNG, `-` prints SVG to stdout). Flags override `--config`, including `--preset`. |
 
-Render flags mirror the editor's settings: `--icon <set:name>` (required), `--preset <name>`, `--size`, `--rotate`, `--stroke-color`, `--stroke-width`, `--stroke-opacity`, `--fill-color`, `--fill-opacity`, `--background` (a colour, a CSS `linear-gradient(...)` or `radial-gradient(...)`), `--margin`, `--radius`, `--border-width`, `--border-color`, `--png-size` (default 512) and `--format svg|png`.
+Render flags mirror the editor's settings: `--icon <set:name>` (required), `--preset <name>`, `--size`, `--rotate`, `--stroke-color`, `--stroke-width`, `--stroke-opacity`, `--fill-color`, `--fill-opacity`, `--background` (a colour, a CSS `linear-gradient(...)` or `radial-gradient(...)`), `--margin`, `--radius`, `--border-width`, `--border-color`, `--png-size` (default 512) and `--format svg|png`. Defaults are the editor's light-theme starting values (black icon on white); the editor itself opens in its dark theme, so pass colours or a `--preset` if you want that look.
 
 ### Example: an agent making a logo
 
@@ -122,7 +122,7 @@ pnpm --silent logo render --config logo.json --rotate=-15 --out logo.png --json
 
 Errors are machine-readable too: `error: <what>` and `help: <a runnable fix>` on stderr, and the same object on stdout with `--json`. Exit 1 means an I/O or rendering problem (missing config file, unknown icon, output path not writable, rasteriser unavailable); exit 2 means the command line or the config content is wrong, and a bad flag is exit 2 whatever else is wrong. Every command rejects unknown flags. Colour values may not contain control characters.
 
-The CLI reuses the editor's icon cleaning and presets, so an SVG it renders has the same structure as the editor's export. Pixel-identical parity with the browser PNG is not a goal. Where the SVG is knowingly not what the browser draws, `--json` says so with `backgroundApproximated: true` and stderr carries a warning: a radial gradient's shape, size and position are ignored (it is drawn centred) and its negative stop positions are clamped, and a gradient is not repeated under a border whose colour is not opaque.
+The CLI reuses the editor's icon cleaning and presets, so an SVG it renders has the same structure as the editor's export. Pixel-identical parity with the browser PNG is not a goal. Where the SVG is knowingly not what the browser draws, `--json` says so with `backgroundApproximated: true` (and the reasons in `backgroundApproximations`) and stderr carries one warning per reason: a radial gradient's shape, size and position are ignored (it is drawn centred) and its negative stop positions are clamped, and a gradient is not repeated under a border whose colour is not opaque.
 
 ## 📚 Using Other Icon Libraries
 

@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 /**
  * Map a spawn outcome to this process's exit code and, on a shim-level
  * failure, the error/help text. Pure, so it is tested without spawning
- * anything: a spawn failure or a signal death is exit 1 with an error and a
+ * anything: a spawn failure, a signal death or a missing status is exit 1 with an error and a
  * help line; otherwise the child's code and no message (the child already
  * printed its own).
  */
@@ -32,7 +32,14 @@ export function exitFor(result) {
       help: 'run it again',
     };
   }
-  return { code: result.status ?? 1, error: null, help: null };
+  if (result.status === null || result.status === undefined) {
+    return {
+      code: 1,
+      error: 'just-logo ended without an exit status',
+      help: 'run it again',
+    };
+  }
+  return { code: result.status, error: null, help: null };
 }
 
 /** The lines to print for a shim-level failure: JSON on stdout when --json was asked for, error/help on stderr. */

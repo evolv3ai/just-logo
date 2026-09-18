@@ -143,7 +143,8 @@ describe('parseGradient (AC4)', () => {
   });
 
   it('does not backtrack on long runs of spaces inside a stop', () => {
-    const spaces = ' '.repeat(5000);
+    // 200k spaces: linear work takes milliseconds, a quadratic scan would take minutes
+    const spaces = ' '.repeat(200_000);
     const t0 = Date.now();
     expect(
       parseGradient(`linear-gradient(90deg, red${spaces}x, blue)`),
