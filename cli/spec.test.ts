@@ -86,6 +86,11 @@ describe('spec schema (AC8)', () => {
       { icon: 'lucide:rocket', preset: 'Nope' },
       { icon: 'lucide:rocket', bogus: 1 },
       { icon: 'lucide:rocket', rotate: -180 },
+      { icon: 'lucide:rocket', background: 'red\u001b]0;x\u0007' },
+      { icon: 'lucide:rocket', strokeColor: 'a\nb' },
+      { icon: 'lucide:rocket', fillColor: 'a\u0085b' },
+      { icon: 'lucide:rocket', borderColor: 'a\u2028b' },
+      { icon: 'lucide:rocket', borderColor: 'caf\u00e9 \u00a0' },
     ];
     for (const sample of samples) {
       expect(check(sample).length === 0, JSON.stringify(sample)).toBe(
@@ -118,6 +123,37 @@ describe('spec schema (AC8)', () => {
     });
     const paths = errors.map((e) => e.path).sort();
     expect(paths).toEqual(['bogus', 'icon', 'pngSize', 'preset', 'size']);
+  });
+
+  it('rejects control characters in every free-text field, and nothing else', () => {
+    for (const key of [
+      'strokeColor',
+      'fillColor',
+      'background',
+      'borderColor',
+    ] as const) {
+      for (const bad of [
+        '\u0000',
+        '\u001b[31m',
+        '\n',
+        '\u007f',
+        '\u0085',
+        '\u009f',
+        '\u2028',
+        '\u2029',
+      ]) {
+        expect(
+          validateSpec({ icon: 'lucide:rocket', [key]: `#fff${bad}` }),
+          `${key} ${JSON.stringify(bad)}`,
+        ).toEqual([
+          { path: key, message: 'must not contain control characters' },
+        ]);
+      }
+      // printable text either side of the ranges is fine: space, ~, NBSP, accents
+      expect(
+        validateSpec({ icon: 'lucide:rocket', [key]: ' ~\u00a0\u00e9' }),
+      ).toEqual([]);
+    }
   });
 
   it('rejects non-objects', () => {

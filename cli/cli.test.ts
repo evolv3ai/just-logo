@@ -315,7 +315,7 @@ describe('flag validation', () => {
     expect(r.stderr).toContain('--size must be a number');
   });
 
-  it('never lets user text forge a help: line on stderr', () => {
+  it('rejects control characters in colour values, from flags and from a config file', () => {
     const r = run([
       'render',
       '--icon',
@@ -325,12 +325,492 @@ describe('flag validation', () => {
       '--out',
       '-',
     ]);
-    expect(r.status).toBe(0);
+    expect(r.status).toBe(2);
+    expect(r.stdout).toBe('');
+    expect(r.stderr).toContain(
+      'error: invalid flags: background: must not contain control characters',
+    );
     expect(r.stderr).not.toMatch(/^help: rm/m);
+
+    const cfg = path.join(tmp, 'escape.json');
+    fs.writeFileSync(
+      cfg,
+      JSON.stringify({
+        icon: 'lucide:star',
+        strokeColor: 'red\u001b]0;pwned\u0007',
+      }),
+    );
+    const c = run(['render', '--config', cfg, '--out', '-']);
+    expect(c.status).toBe(2);
+    expect(c.stdout).toBe('');
+    expect(c.stderr).toContain(
+      'error: invalid config: strokeColor: must not contain control characters',
+    );
+  });
+
+  it('never lets user text forge a line or reach the terminal raw, on error and warning paths', () => {
+    const hostile = 'x\nhelp: rm -rf /\r\u001b[31m\u0085\u009b\u2028y';
+    const cases: string[][] = [
+      ['icons', 'show', hostile],
+      ['icons', 'search', 'star', '--set', hostile],
+      ['icons', hostile],
+      [hostile],
+      ['render', '--icon', 'lucide:star', '--size', hostile],
+      ['render', '--icon', 'lucide:star', '--format', hostile],
+      ['render', '--config', hostile],
+    ];
+    for (const args of cases) {
+      const r = run([...args, '--json']);
+      expect(r.status, args.join(' ')).not.toBe(0);
+      // stderr is exactly an error line and a help line
+      const lines = r.stderr.trimEnd().split('\n');
+      expect(lines, args.join(' ')).toHaveLength(2);
+      expect(lines[0]).toMatch(/^error: /);
+      expect(lines[1]).toMatch(/^help: just-logo /);
+      // eslint-disable-next-line no-control-regex
+      expect(r.stderr).not.toMatch(
+        /[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u2028\u2029]/,
+      );
+      // the help line is a fixed suggestion: none of the user's text is in it
+      expect(lines[1]).not.toContain('rm -rf');
+      const parsed = JSON.parse(r.stdout) as { error: string; help: string };
+      expect(`error: ${parsed.error}`).toBe(lines[0]);
+      expect(`help: ${parsed.help}`).toBe(lines[1]);
+    }
+  });
+
+  it('caps the length of user text in a message', () => {
+    const r = run(['icons', 'show', 'x'.repeat(5000)]);
+    expect(r.status).toBe(1);
+    const [error] = r.stderr.split('\n');
+    expect(error).toBe(`error: icon not found: ${'x'.repeat(200)}…`);
+  });
+
+  it('never puts shell syntax from an icon id into the runnable help line', () => {
+    const r = run(['icons', 'show', 'lucide:x;touch pwned']);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('error: icon not found: lucide:x;touch pwned');
+    expect(r.stderr).toContain('help: just-logo icons search rocket\n');
+    // a well-formed name is still echoed, which is the useful case
+    const ok = run(['icons', 'show', 'lucide:no-such-icon']);
+    expect(ok.stderr).toContain('help: just-logo icons search no-such-icon\n');
+    const render = run([
+      'render',
+      '--icon',
+      'lucide:no-such-icon',
+      '--out',
+      '-',
+    ]);
+    expect(render.stderr).toContain(
+      'help: just-logo icons search no-such-icon\n',
+    );
+  });
+});
+
+/** Run the command a help line suggests, the way a user pasting it would. */
+function runHelpLine(stderr: string, cwd: string): Run {
+  const help = /^help: just-logo (.*)$/m.exec(stderr);
+  if (!help) throw new Error(`no help line in: ${stderr}`);
+  const command = help[1].replace(/\s+#.*$/, ''); // drop the trailing shell comment
+  return run(command.split(' '), cwd);
+}
+
+describe('render flags', () => {
+  it('maps every flag onto its own setting, in the spec and in the drawing', () => {
+    const r = run([
+      'render',
+      '--icon',
+      'lucide:star',
+      '--size',
+      '200',
+      '--rotate=-15',
+      '--stroke-color',
+      '#111111',
+      '--stroke-width',
+      '3',
+      '--stroke-opacity',
+      '40',
+      '--fill-color',
+      '#222222',
+      '--fill-opacity',
+      '60',
+      '--background',
+      '#333333',
+      '--margin',
+      '32',
+      '--radius',
+      '48',
+      '--border-width',
+      '8',
+      '--border-color',
+      '#444444',
+      '--png-size',
+      '256',
+      '--out',
+      '-',
+      '--json',
+    ]);
+    expect(r.status).toBe(0);
+    const out = JSON.parse(r.stdout) as {
+      spec: Record<string, unknown>;
+      svg: string;
+    };
+    expect(out.spec).toEqual({
+      icon: 'lucide:star',
+      size: 200,
+      rotate: -15,
+      strokeColor: '#111111',
+      strokeWidth: 3,
+      strokeOpacity: 40,
+      fillColor: '#222222',
+      fillOpacity: 60,
+      background: '#333333',
+      margin: 32,
+      radius: 48,
+      borderWidth: 8,
+      borderColor: '#444444',
+      pngSize: 256,
+    });
+    // margin 32 -> a 480 box at 16; radius 48; border 8 -> padding box 464 at 24, radius 40
+    expect(out.svg).toContain(
+      '<rect x="16" y="16" width="480" height="480" rx="48" fill="#333333"/>',
+    );
+    expect(out.svg).toContain('M64 24h384a40 40 0 0 1 40 40');
+    expect(out.svg).toContain('fill="#444444" fill-rule="evenodd"/>');
+    expect(out.svg).toContain('<g transform="rotate(-15 256 256)">');
+    expect(out.svg).toContain(
+      '<svg x="156" y="156" width="200" height="200" viewBox="0 0 24 24" preserveAspectRatio="none" ' +
+        'color="#111111" stroke-width="3" stroke-opacity="0.4" fill="#222222" fill-opacity="0.6">',
+    );
+  });
+
+  it('labels a validation error with the input it came from', () => {
+    const flag = run(['render', '--icon', 'lucide:star', '--size', '9999']);
+    expect(flag.status).toBe(2);
+    expect(flag.stderr).toContain(
+      'error: invalid flags: size: must be between 0 and 512',
+    );
+    const cfg = path.join(tmp, 'label.json');
+    fs.writeFileSync(cfg, JSON.stringify({ icon: 'lucide:star', margin: -1 }));
+    // a valid flag next to an invalid config value: the config gets the blame
+    const config = run(['render', '--config', cfg, '--size', '100']);
+    expect(config.status).toBe(2);
+    expect(config.stderr).toContain(
+      'error: invalid config: margin: must be between 0 and 256',
+    );
+    const icon = run(['render', '--icon', 'Not An Id', '--out', '-']);
+    expect(icon.status).toBe(2);
+    expect(icon.stderr).toContain('error: invalid spec: icon: required');
+  });
+
+  it('explains a bare negative number, and its help line runs', () => {
+    const dir = fs.mkdtempSync(path.join(tmp, 'neg-'));
+    const bare = run(
+      ['render', '--icon', 'lucide:star', '--rotate', '-15', '--json'],
+      dir,
+    );
+    expect(bare.status).toBe(2);
+    const parsed = JSON.parse(bare.stdout) as { help: string; exit: number };
+    expect(parsed.exit).toBe(2);
+    expect(parsed.help).toContain('--rotate=-15');
+    expect(parsed.help).toContain('negative values need the = form');
+    expect(fs.readdirSync(dir)).toEqual([]);
+    const fixed = runHelpLine(bare.stderr, dir);
+    expect(fixed.status).toBe(0);
+    expect(fs.readFileSync(path.join(dir, 'logo.svg'), 'utf8')).toContain(
+      'rotate(-15 256 256)',
+    );
+  });
+
+  it('gives a help line that runs for every bad numeric flag', () => {
+    const dir = fs.mkdtempSync(path.join(tmp, 'helpline-'));
+    for (const flag of [
+      'size',
+      'rotate',
+      'stroke-width',
+      'stroke-opacity',
+      'fill-opacity',
+      'margin',
+      'radius',
+      'border-width',
+      'png-size',
+    ]) {
+      const bad = run(
+        ['render', '--icon', 'lucide:star', `--${flag}=abc`],
+        dir,
+      );
+      expect(bad.status, flag).toBe(2);
+      expect(bad.stderr, flag).toContain(`error: --${flag} must be a number`);
+      expect(bad.stderr, flag).toMatch(
+        new RegExp(
+          `^help: just-logo render --icon lucide:rocket --${flag}=-?\\d+$`,
+          'm',
+        ),
+      );
+      expect(runHelpLine(bad.stderr, dir).status, flag).toBe(0);
+    }
+  });
+
+  it('rejects an empty --config or --out instead of ignoring it', () => {
+    for (const flag of ['config', 'out']) {
+      const dir = fs.mkdtempSync(path.join(tmp, 'empty-'));
+      const r = run(['render', '--icon', 'lucide:star', `--${flag}=`], dir);
+      expect(r.status, flag).toBe(2);
+      expect(r.stderr, flag).toContain(
+        `error: --${flag} needs a path, got an empty value`,
+      );
+      expect(fs.readdirSync(dir), flag).toEqual([]);
+    }
+  });
+
+  it('exits 2 for a bad flag whatever else is wrong', () => {
+    // a bad --format next to a missing icon, a missing config file, and both
+    const missing = path.join(tmp, 'not-there.json');
+    for (const rest of [
+      ['--icon', 'lucide:no-such-icon'],
+      ['--config', missing],
+      ['--icon', 'lucide:no-such-icon', '--config', missing],
+    ]) {
+      const r = run(['render', ...rest, '--format', 'jpg', '--out', '-']);
+      expect(r.status, rest.join(' ')).toBe(2);
+      expect(r.stderr).toContain(
+        'error: --format must be svg or png, got "jpg"',
+      );
+    }
+    const png = run([
+      'render',
+      '--icon',
+      'lucide:no-such-icon',
+      '--format',
+      'png',
+      '--out',
+      '-',
+    ]);
+    expect(png.status).toBe(2);
+    expect(png.stderr).toContain('PNG cannot be written to stdout');
+  });
+
+  it('reports a failed write with exit 1, the reason, and a help line that runs', () => {
+    const dir = fs.mkdtempSync(path.join(tmp, 'write-'));
+    fs.writeFileSync(path.join(dir, 'file'), '');
+    const under = run(
+      ['render', '--icon', 'lucide:star', '--out', 'file/logo.svg', '--json'],
+      dir,
+    );
+    expect(under.status).toBe(1);
+    const parsed = JSON.parse(under.stdout) as { error: string; exit: number };
+    expect(parsed.exit).toBe(1);
+    expect(parsed.error).toBe(
+      'could not write file/logo.svg: part of the path is a file, not a directory',
+    );
+    const onto = run(['render', '--icon', 'lucide:star', '--out', '.'], dir);
+    expect(onto.status).toBe(1);
+    expect(onto.stderr).toContain(
+      'error: could not write .: it is a directory',
+    );
+    expect(onto.stderr).toContain(
+      'help: just-logo render --icon lucide:star --out=logo.svg',
+    );
+    expect(runHelpLine(onto.stderr, dir).status).toBe(0);
+    expect(fs.existsSync(path.join(dir, 'logo.svg'))).toBe(true);
+  });
+});
+
+describe('icons errors', () => {
+  it('exits 2 with a runnable help line for a bad icons command line', () => {
+    const cases: [string[], string, string][] = [
+      [
+        ['icons'],
+        'unknown icons subcommand: (none)',
+        'just-logo icons search rocket',
+      ],
+      [
+        ['icons', 'bogus'],
+        'unknown icons subcommand: bogus',
+        'just-logo icons search rocket',
+      ],
+      [
+        ['icons', 'search'],
+        'icons search needs a query',
+        'just-logo icons search rocket',
+      ],
+      [
+        ['icons', 'search', 'star', '--set', 'nope'],
+        'unknown set: nope',
+        'just-logo icons sets',
+      ],
+      [
+        ['icons', 'search', 'star', '--set='],
+        'unknown set: ',
+        'just-logo icons sets',
+      ],
+      [
+        ['icons', 'show'],
+        'icons show needs a <set:name> id',
+        'just-logo icons show lucide:rocket',
+      ],
+      [
+        ['icons', 'sets', 'extra'],
+        'Unexpected argument',
+        'just-logo icons sets',
+      ],
+    ];
+    for (const [args, error, help] of cases) {
+      const r = run([...args, '--json']);
+      expect(r.status, args.join(' ')).toBe(2);
+      const parsed = JSON.parse(r.stdout) as {
+        error: string;
+        help: string;
+        exit: number;
+      };
+      expect(parsed.error, args.join(' ')).toContain(error);
+      expect(parsed.help, args.join(' ')).toBe(help);
+      expect(parsed.exit).toBe(2);
+      expect(r.stderr).toBe(`error: ${parsed.error}\nhelp: ${help}\n`);
+      expect(runHelpLine(r.stderr, tmp).status, help).toBe(0);
+    }
+  });
+
+  it('exits 1 for an icon that does not exist, in a known set or not', () => {
+    for (const id of ['lucide:no-such-icon', 'nope:star', 'star']) {
+      const r = run(['icons', 'show', id]);
+      expect(r.status, id).toBe(1);
+      expect(r.stderr, id).toContain(`error: icon not found: ${id}\n`);
+      expect(r.stdout).toBe('');
+    }
+  });
+
+  it('returns 20 results by default and says so when nothing matches', () => {
+    const hits = JSON.parse(
+      run(['icons', 'search', 'arrow', '--json']).stdout,
+    ) as unknown[];
+    expect(hits).toHaveLength(20);
+    const more = JSON.parse(
+      run(['icons', 'search', 'arrow', '--limit', '21', '--json']).stdout,
+    ) as unknown[];
+    expect(more).toHaveLength(21);
+    const none = run(['icons', 'search', 'qqqqzzzzqqqq']);
+    expect(none.status).toBe(0);
+    expect(none.stdout).toBe('(no matches)\n');
   });
 });
 
 describe('format and default file name', () => {
+  it('infers the format from the extension in any case, and lets --format override it', () => {
+    const dir = fs.mkdtempSync(path.join(tmp, 'infer-'));
+    const upper = run(
+      ['render', '--icon', 'lucide:star', '--out', 'LOGO.PNG', '--json'],
+      dir,
+    );
+    expect(upper.status).toBe(0);
+    expect(JSON.parse(upper.stdout).format).toBe('png');
+    expect(pngSize(path.join(dir, 'LOGO.PNG')).width).toBe(512);
+    // an explicit --format wins over the extension, both ways
+    const svg = run(
+      [
+        'render',
+        '--icon',
+        'lucide:star',
+        '--format',
+        'svg',
+        '--out',
+        'a.png',
+        '--json',
+      ],
+      dir,
+    );
+    expect(JSON.parse(svg.stdout).format).toBe('svg');
+    expect(fs.readFileSync(path.join(dir, 'a.png'), 'utf8')).toMatch(/^<svg /);
+    const png = run(
+      [
+        'render',
+        '--icon',
+        'lucide:star',
+        '--format',
+        'png',
+        '--out',
+        'b.svg',
+        '--json',
+      ],
+      dir,
+    );
+    expect(JSON.parse(png.stdout).format).toBe('png');
+    expect(pngSize(path.join(dir, 'b.svg')).width).toBe(512);
+    // anything else is svg, and the default name follows
+    const other = run(
+      ['render', '--icon', 'lucide:star', '--out', 'c.txt', '--json'],
+      dir,
+    );
+    expect(JSON.parse(other.stdout).format).toBe('svg');
+    const bare = run(['render', '--icon', 'lucide:star', '--json'], dir);
+    expect(path.basename(JSON.parse(bare.stdout).out)).toBe('logo.svg');
+    expect(
+      run(['render', '--icon', 'lucide:star', '--format', 'PNG'], dir).status,
+    ).toBe(2);
+  });
+
+  it('reports the size and byte count of what it actually wrote', () => {
+    const dir = fs.mkdtempSync(path.join(tmp, 'summary-'));
+    const svg = JSON.parse(
+      run(['render', '--icon', 'lucide:star', '--out', 'a.svg', '--json'], dir)
+        .stdout,
+    ) as {
+      bytes: number;
+      width: number;
+      height: number;
+      svg: string;
+      out: string;
+    };
+    const svgFile = fs.readFileSync(path.join(dir, 'a.svg'));
+    expect(svg.bytes).toBe(svgFile.byteLength);
+    expect(svgFile.toString('utf8')).toBe(svg.svg);
+    expect([svg.width, svg.height]).toEqual([512, 512]);
+    expect(svg.svg).toContain('width="512" height="512"');
+    const png = JSON.parse(
+      run(
+        [
+          'render',
+          '--icon',
+          'lucide:star',
+          '--out',
+          'a.png',
+          '--png-size',
+          '300',
+          '--json',
+        ],
+        dir,
+      ).stdout,
+    ) as { bytes: number; width: number; height: number };
+    expect(png.bytes).toBe(fs.statSync(path.join(dir, 'a.png')).size);
+    expect({ width: png.width, height: png.height }).toEqual(
+      pngSize(path.join(dir, 'a.png')),
+    );
+    expect(png.width).toBe(300);
+    // --png-size does not change an SVG: it stays 512
+    const ignored = JSON.parse(
+      run([
+        'render',
+        '--icon',
+        'lucide:star',
+        '--out',
+        '-',
+        '--png-size',
+        '300',
+        '--json',
+      ]).stdout,
+    ) as { bytes: number; width: number; svg: string };
+    expect(ignored.width).toBe(512);
+    expect(ignored.bytes).toBe(Buffer.byteLength(ignored.svg));
+    // the text summary says the same thing
+    const text = run(
+      ['render', '--icon', 'lucide:star', '--out', 'b.svg'],
+      dir,
+    );
+    expect(text.stdout).toBe(
+      `wrote ${fs.realpathSync(dir)}/b.svg (svg, 512x512, ${svg.bytes} bytes)\n`,
+    );
+  });
+
   it('refuses --format png with --out - and explains', () => {
     const r = run([
       'render',
@@ -455,7 +935,17 @@ describe('json contract (AC7)', () => {
     ['render', '--icon', 'lucide:star', '--out', '-'],
     ['render', '--icon', 'lucide:nope', '--out', '-'], // error path
     ['nonsense'], // usage path
+    ['render', '--icon', 'lucide:star', '--bogus'], // Node's argument parser: unknown flag
+    ['render', '--icon', 'lucide:star', '--size'], // ... missing value
+    ['render', '--icon', 'lucide:star', '--rotate', '-15'], // ... ambiguous negative
+    ['icons', 'search', 'star', '--limit'], // ... outside render
+    ['presets', 'extra'], // ... unexpected positional
   ];
+  const parserErrors = commands.slice(-5);
+  it('exits 2 for every argument-parser error', () => {
+    for (const cmd of parserErrors)
+      expect(run(cmd).status, cmd.join(' ')).toBe(2);
+  });
   it('returns real content for show, presets and schema', () => {
     const show = JSON.parse(
       run(['icons', 'show', 'lucide:star', '--json']).stdout,
@@ -507,6 +997,45 @@ describe('json contract (AC7)', () => {
       }
     });
   }
+});
+
+describe('the documented pnpm form', () => {
+  const pnpm = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
+  const hasPnpm =
+    spawnSync(pnpm, ['--version'], { encoding: 'utf8' }).status === 0;
+
+  it.skipIf(!hasPnpm)(
+    'pnpm --silent logo --json prints exactly one JSON value',
+    () => {
+      const r = spawnSync(
+        pnpm,
+        ['--silent', 'logo', 'icons', 'sets', '--json'],
+        {
+          cwd: ROOT,
+          encoding: 'utf8',
+        },
+      );
+      expect(r.status).toBe(0);
+      expect(JSON.parse(r.stdout)).toContain('lucide');
+      const failed = spawnSync(
+        pnpm,
+        ['--silent', 'logo', 'icons', 'show', 'lucide:no-such-icon', '--json'],
+        { cwd: ROOT, encoding: 'utf8' },
+      );
+      expect(failed.status).toBe(1);
+      expect(JSON.parse(failed.stdout).exit).toBe(1);
+    },
+  );
+
+  it('the README only shows --json through pnpm --silent or the just-logo bin', () => {
+    const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8');
+    const jsonLines = readme
+      .split('\n')
+      .filter((line) => /^\s*(pnpm|just-logo|npx)\b.*--json/.test(line));
+    expect(jsonLines.length).toBeGreaterThan(0);
+    for (const line of jsonLines)
+      expect(line).toMatch(/^\s*(pnpm --silent logo|just-logo) /);
+  });
 });
 
 describe('bin shim', () => {

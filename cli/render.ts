@@ -16,7 +16,11 @@ export type RadialGradient = {
   cy: number;
   r: number;
   stops: GradientStop[];
-  /** True when a shape, size or position prefix was present and ignored. */
+  /**
+   * True when the geometry is not what CSS would draw: a shape, size or
+   * position prefix was present and ignored, or a negative stop position was
+   * clamped to the centre.
+   */
   approximated: boolean;
 };
 export type Gradient = LinearGradient | RadialGradient;
@@ -60,9 +64,18 @@ function round(n: number): number {
   return Number(n.toFixed(4)) + 0;
 }
 
+/** The CSS <number> grammar: optional sign, optional leading digits, optional exponent. */
+const CSS_NUMBER = '[+-]?(?:\\d*\\.)?\\d+(?:e[+-]?\\d+)?';
+const ANGLE = new RegExp(`^(${CSS_NUMBER})(deg|grad|rad|turn)$`, 'i');
+const PERCENTAGE = new RegExp(`^${CSS_NUMBER}%$`, 'i');
+const COLOR_ARGUMENT = new RegExp(
+  `^(?:${CSS_NUMBER}(?:%|deg|grad|rad|turn)?|none)$`,
+  'i',
+);
+
 /** A CSS angle in any unit, as degrees; null if it is not an angle. */
 function parseAngle(token: string): number | null {
-  const m = /^(-?\d+(?:\.\d+)?)(deg|grad|rad|turn)$/i.exec(token.trim());
+  const m = ANGLE.exec(token.trim());
   if (!m) return null;
   const n = Number(m[1]);
   switch (m[2].toLowerCase()) {
@@ -83,16 +96,17 @@ function splitStop(part: string): { color: string; position: number | null } {
   const i = t.lastIndexOf(' ');
   if (i === -1) return { color: t, position: null };
   const tail = t.slice(i + 1);
-  if (!/^-?\d+(?:\.\d+)?%$/.test(tail)) return { color: t, position: null };
+  if (!PERCENTAGE.test(tail)) return { color: t, position: null };
   return { color: t.slice(0, i), position: Number(tail.slice(0, -1)) / 100 };
 }
 
 /**
  * Parse colour stops. Positions follow the CSS rules: a missing first stop is
  * 0%, a missing last stop is 100%, and a run of unpositioned stops is spaced
- * evenly between its positioned neighbours. Positions outside 0..100% are
- * clamped, which is what SVG does with offsets anyway. Returns null when any
- * stop is not a colour, so nothing invalid is ever emitted as converted.
+ * evenly between its positioned neighbours. Positions are returned as given,
+ * so they may lie outside 0..1; SVG clamps offsets, so callers rescale the
+ * gradient geometry instead (see fitStops). Returns null when any stop is not
+ * a colour, so nothing invalid is ever emitted as converted.
  */
 function parseStops(parts: string[]): GradientStop[] | null {
   const raw = parts.map(splitStop);
@@ -125,7 +139,24 @@ function parseStops(parts: string[]): GradientStop[] | null {
   }
   return raw.map((r, k) => ({
     color: r.color,
-    offset: round(Math.min(1, Math.max(0, offsets[k] as number))),
+    offset: round(offsets[k] as number),
+  }));
+}
+
+/**
+ * SVG clamps stop offsets to 0..1, CSS does not: `blue 150%` puts blue beyond
+ * the box, so the box ends part-way through the blend. Map the offsets onto
+ * 0..1 over the range [lo, hi] they really span; the caller stretches the
+ * gradient line (or radius) by the same range, which draws the same picture.
+ */
+function fitStops(
+  stops: GradientStop[],
+  lo: number,
+  hi: number,
+): GradientStop[] {
+  return stops.map((s) => ({
+    color: s.color,
+    offset: round(Math.min(1, Math.max(0, (s.offset - lo) / (hi - lo)))),
   }));
 }
 
@@ -154,12 +185,16 @@ export function parseGradient(background: string): Gradient | null {
     if (parts.length < 2) return null;
     const stops = parseStops(parts);
     if (!stops) return null;
+    // Stops past 100% are exact with a larger radius. A radius cannot start
+    // below zero, so negative positions are clamped and reported.
+    if (stops[0].offset < 0) approximated = true;
+    const hi = Math.max(1, stops[stops.length - 1].offset);
     return {
       kind: 'radial',
       cx: 0.5,
       cy: 0.5,
-      r: round(Math.SQRT1_2),
-      stops,
+      r: round(Math.SQRT1_2 * hi),
+      stops: fitStops(stops, 0, hi),
       approximated,
     };
   }
@@ -191,13 +226,16 @@ export function parseGradient(background: string): Gradient | null {
     const half = (Math.abs(Math.sin(rad)) + Math.abs(Math.cos(rad))) / 2;
     const dx = Math.sin(rad) * half;
     const dy = -Math.cos(rad) * half;
+    // Stops outside 0..100% stretch the line rather than being clamped.
+    const lo = Math.min(0, stops[0].offset);
+    const hi = Math.max(1, stops[stops.length - 1].offset);
     return {
       kind: 'linear',
-      x1: round(0.5 - dx),
-      y1: round(0.5 - dy),
-      x2: round(0.5 + dx),
-      y2: round(0.5 + dy),
-      stops,
+      x1: round(0.5 + dx * (2 * lo - 1)),
+      y1: round(0.5 + dy * (2 * lo - 1)),
+      x2: round(0.5 + dx * (2 * hi - 1)),
+      y2: round(0.5 + dy * (2 * hi - 1)),
+      stops: fitStops(stops, lo, hi),
     };
   }
 }
@@ -226,14 +264,48 @@ const NAMED_COLORS = new Set(
 export function isPlainColor(value: string): boolean {
   const v = value.trim();
   if (/^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(v)) return true;
-  // Functional colours: arguments may only be numbers, %, separators and angle/none keywords.
-  const fn = /^(?:rgba?|hsla?)\(\s*([^()]*)\)$/i.exec(v);
-  if (fn)
-    return (
-      /\d/.test(fn[1]) &&
-      /^[\d.%,\s/-]*(?:(?:deg|grad|rad|turn|none)[\d.%,\s/-]*)*$/i.test(fn[1])
-    );
+  if (/^(?:rgba?|hsla?)\(/i.test(v)) return colorArguments(v) !== null;
   return NAMED_COLORS.has(v.toLowerCase());
+}
+
+/**
+ * The arguments of an rgb()/rgba()/hsl()/hsla() colour: three channels and an
+ * optional alpha, each a number, percentage, angle or `none`, with at most one
+ * `/` and that only before the alpha. Null for anything else, `rgb(1)` included.
+ */
+function colorArguments(value: string): string[] | null {
+  const fn = /^(?:rgba?|hsla?)\(([^()]*)\)$/i.exec(value.trim());
+  if (!fn) return null;
+  const [channels, alpha, ...extra] = fn[1].split('/');
+  if (extra.length > 0) return null;
+  const tokens = (s: string) => s.split(/[\s,]+/).filter((t) => t !== '');
+  const args = tokens(channels);
+  if (alpha !== undefined) {
+    const a = tokens(alpha);
+    if (args.length !== 3 || a.length !== 1) return null;
+    args.push(a[0]);
+  }
+  if (args.length !== 3 && args.length !== 4) return null;
+  return args.every((t) => COLOR_ARGUMENT.test(t)) ? args : null;
+}
+
+/** True when a colour certainly paints with full alpha. Anything unrecognised counts as not opaque. */
+export function isOpaqueColor(value: string): boolean {
+  const v = value.trim().toLowerCase();
+  const hex = /^#([0-9a-f]+)$/.exec(v);
+  if (hex) {
+    const h = hex[1];
+    if (h.length === 3 || h.length === 6) return true;
+    if (h.length === 4) return h[3] === 'f';
+    return h.length === 8 && h.slice(6) === 'ff';
+  }
+  const args = colorArguments(v);
+  if (args) {
+    if (args.length === 3) return true;
+    const a = args[3];
+    return a.endsWith('%') ? Number(a.slice(0, -1)) >= 100 : Number(a) >= 1;
+  }
+  return NAMED_COLORS.has(v) && v !== 'transparent';
 }
 
 function escapeAttr(value: string): string {
@@ -243,11 +315,32 @@ function escapeAttr(value: string): string {
     .replace(/</g, '&lt;');
 }
 
+/** A square with rounded corners as a closed path; the radius is capped at half the side, as SVG and CSS do. */
+function roundedSquarePath(
+  offset: number,
+  side: number,
+  radius: number,
+): string {
+  const r = round(Math.min(Math.max(0, radius), side / 2));
+  if (r === 0) return `M${offset} ${offset}h${side}v${side}h${-side}z`;
+  const s = round(side - 2 * r);
+  return (
+    `M${round(offset + r)} ${offset}h${s}a${r} ${r} 0 0 1 ${r} ${r}v${s}a${r} ${r} 0 0 1 ${-r} ${r}` +
+    `h${-s}a${r} ${r} 0 0 1 ${-r} ${-r}v${-s}a${r} ${r} 0 0 1 ${r} ${-r}z`
+  );
+}
+
 export type RenderResult = {
   svg: string;
   /** True when the background was not a colour or a convertible gradient and was written as-is. */
   backgroundPassthrough: boolean;
-  /** True when a radial gradient's shape/size/position was ignored and the default geometry used. */
+  /**
+   * True when the background is converted but not exactly what CSS draws: a
+   * radial gradient's shape/size/position was ignored, a negative radial stop
+   * was clamped, or a gradient sits under a border that is not opaque (CSS
+   * repeats the gradient tile under the border; here the border area shows
+   * only the border colour).
+   */
   backgroundApproximated: boolean;
   gradient: Gradient | null;
 };
@@ -261,7 +354,10 @@ export function renderSvg(spec: LogoSpec, icon: IconItem): RenderResult {
   const gradient = parseGradient(spec.background);
   const backgroundPassthrough = !gradient && !isPlainColor(spec.background);
   const backgroundApproximated =
-    gradient?.kind === 'radial' && gradient.approximated;
+    (gradient?.kind === 'radial' && gradient.approximated) ||
+    (gradient !== null &&
+      spec.borderWidth > 0 &&
+      !isOpaqueColor(spec.borderColor));
 
   const bw = spec.borderWidth;
   const outerSide = CANVAS - spec.margin;
@@ -288,18 +384,25 @@ export function renderSvg(spec: LogoSpec, icon: IconItem): RenderResult {
       `</radialGradient></defs>`;
   }
 
-  // CSS box model: the border is drawn inside the element, keeps the outer
-  // radius, and the background (a gradient's positioning box included) fills
-  // the padding box inside it. Two rects reproduce that exactly; one rect
-  // with a centred stroke would square off corners once bw > 2 * radius.
+  // CSS box model: the border is drawn inside the element and keeps the outer
+  // radius; the padding box inside it has radius - border. The border is a
+  // ring (outer square minus padding box, even-odd), drawn over the
+  // background: a plain colour paints the whole border box, so a translucent
+  // border blends with it as in the editor, while a gradient is positioned in
+  // the padding box. A stroked rect would square off corners once bw > 2 * radius.
   let rect: string;
   if (bw > 0) {
     const innerSide = Math.max(0, outerSide - 2 * bw);
     const innerOffset = outerOffset + bw;
     const innerRx = Math.max(0, spec.radius - bw);
+    const ring =
+      roundedSquarePath(outerOffset, outerSide, spec.radius) +
+      (innerSide > 0 ? roundedSquarePath(innerOffset, innerSide, innerRx) : '');
     rect =
-      `<rect x="${outerOffset}" y="${outerOffset}" width="${outerSide}" height="${outerSide}" rx="${spec.radius}" fill="${escapeAttr(spec.borderColor)}"/>` +
-      `<rect x="${innerOffset}" y="${innerOffset}" width="${innerSide}" height="${innerSide}" rx="${innerRx}" fill="${fill}"/>`;
+      (gradient
+        ? `<rect x="${innerOffset}" y="${innerOffset}" width="${innerSide}" height="${innerSide}" rx="${innerRx}" fill="${fill}"/>`
+        : `<rect x="${outerOffset}" y="${outerOffset}" width="${outerSide}" height="${outerSide}" rx="${spec.radius}" fill="${fill}"/>`) +
+      `<path d="${ring}" fill="${escapeAttr(spec.borderColor)}" fill-rule="evenodd"/>`;
   } else {
     rect = `<rect x="${outerOffset}" y="${outerOffset}" width="${outerSide}" height="${outerSide}" rx="${spec.radius}" fill="${fill}"/>`;
   }

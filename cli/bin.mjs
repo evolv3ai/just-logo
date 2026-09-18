@@ -72,8 +72,8 @@ function main() {
   }
   const outcome = exitFor(result);
   const { stdout, stderr } = failureOutput(outcome, args.includes('--json'));
-  if (stdout) process.stdout.write(stdout);
-  if (stderr) process.stderr.write(stderr);
+  process.stdout.write(stdout);
+  process.stderr.write(stderr);
   process.exit(outcome.code);
 }
 

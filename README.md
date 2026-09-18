@@ -87,6 +87,11 @@ Everything the editor does, from a terminal and without a browser: search the sa
 
 After `pnpm install`, run it as `pnpm logo <command>` (or `npx tsx cli/index.ts`). `pnpm link --global` makes it available as `just-logo`.
 
+Two things to know when a program reads the output:
+
+- **Use `pnpm --silent logo ... --json`, not `pnpm logo ... --json`.** Without `--silent`, pnpm prints its own `> just-logo@1.0.0 logo ...` banner on stdout ahead of the JSON. The linked `just-logo` command has no banner.
+- **`pnpm logo` runs in the checkout's root**, so relative `--config` and `--out` paths resolve there. The `just-logo` command resolves them against the directory you are in.
+
 | Command                                                       | What it does                                                                                                                                                                          |
 | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `pnpm logo icons sets`                                        | List the icon sets.                                                                                                                                                                   |
@@ -102,22 +107,22 @@ Render flags mirror the editor's settings: `--icon <set:name>` (required), `--pr
 
 ```bash
 # 1. find an icon
-pnpm logo icons search rocket --limit 3 --json
+pnpm --silent logo icons search rocket --limit 3 --json
 # [{"id":"lucide:rocket","set":"lucide","name":"rocket","score":0}, ...]
 
-# 2. write a spec (validate it against `pnpm logo schema` if you like)
+# 2. write a spec in the checkout's root (validate it against `pnpm --silent logo schema` if you like)
 cat > logo.json <<'EOF'
 { "icon": "lucide:rocket", "preset": "Ocean Breeze", "size": 300, "radius": 96, "margin": 32 }
 EOF
 
 # 3. render it, overriding one value on the way
-pnpm logo render --config logo.json --rotate=-15 --out logo.png --json
+pnpm --silent logo render --config logo.json --rotate=-15 --out logo.png --json
 # {"format":"png","out":"/abs/path/logo.png","bytes":...,"width":512,"height":512,"spec":{...}}
 ```
 
-Errors are machine-readable too: `error: <what>` and `help: <a runnable fix>` on stderr, and the same object on stdout with `--json`. Exit 1 means an I/O or rendering problem (missing config file, unknown icon, rasteriser unavailable); exit 2 means the command line or the config content is wrong. Every command rejects unknown flags.
+Errors are machine-readable too: `error: <what>` and `help: <a runnable fix>` on stderr, and the same object on stdout with `--json`. Exit 1 means an I/O or rendering problem (missing config file, unknown icon, output path not writable, rasteriser unavailable); exit 2 means the command line or the config content is wrong, and a bad flag is exit 2 whatever else is wrong. Every command rejects unknown flags. Colour values may not contain control characters.
 
-The CLI reuses the editor's icon cleaning and presets, so an SVG it renders has the same structure as the editor's export. Pixel-identical parity with the browser PNG is not a goal.
+The CLI reuses the editor's icon cleaning and presets, so an SVG it renders has the same structure as the editor's export. Pixel-identical parity with the browser PNG is not a goal. Where the SVG is knowingly not what the browser draws, `--json` says so with `backgroundApproximated: true` and stderr carries a warning: a radial gradient's shape, size and position are ignored (it is drawn centred) and its negative stop positions are clamped, and a gradient is not repeated under a border whose colour is not opaque.
 
 ## 📚 Using Other Icon Libraries
 

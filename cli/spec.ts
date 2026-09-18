@@ -76,6 +76,16 @@ export const NUMBER_RULES: Record<
 /** Every string value is bounded, so a hostile config cannot feed unbounded text to the parsers. */
 export const MAX_STRING = 512;
 
+/**
+ * C0 and C1 control characters plus the Unicode line separators. A colour
+ * never needs them, a terminal acts on them (ESC starts an escape sequence),
+ * and most of them make an XML document ill-formed, so specs may not contain them.
+ */
+export const CONTROL_CHARACTERS =
+  '\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029';
+const HAS_CONTROL = new RegExp(`[${CONTROL_CHARACTERS}]`);
+const NO_CONTROL_PATTERN = `^[^${CONTROL_CHARACTERS}]*$`;
+
 const STRING_KEYS = [
   'icon',
   'preset',
@@ -125,18 +135,21 @@ export function specSchema() {
         type: 'string',
         minLength: 1,
         maxLength: MAX_STRING,
+        pattern: NO_CONTROL_PATTERN,
         default: DEFAULT_SPEC.strokeColor,
       },
       fillColor: {
         type: 'string',
         minLength: 1,
         maxLength: MAX_STRING,
+        pattern: NO_CONTROL_PATTERN,
         default: DEFAULT_SPEC.fillColor,
       },
       background: {
         type: 'string',
         minLength: 1,
         maxLength: MAX_STRING,
+        pattern: NO_CONTROL_PATTERN,
         default: DEFAULT_SPEC.background,
         description:
           'A CSS colour, a linear-gradient(<angle>, <colour> <stop>%, ...) or a radial-gradient(...). Linear gradients become an SVG <linearGradient> with CSS geometry; radial ones become a centred <radialGradient> (shape and position are ignored and reported as backgroundApproximated). Anything else is written as-is and reported as backgroundPassthrough.',
@@ -145,6 +158,7 @@ export function specSchema() {
         type: 'string',
         minLength: 1,
         maxLength: MAX_STRING,
+        pattern: NO_CONTROL_PATTERN,
         default: DEFAULT_SPEC.borderColor,
       },
       ...numberProps,
@@ -201,6 +215,11 @@ export function validateSpec(candidate: unknown): ValidationError[] {
       errors.push({
         path: key,
         message: `must be at most ${MAX_STRING} characters`,
+      });
+    } else if (typeof v === 'string' && HAS_CONTROL.test(v)) {
+      errors.push({
+        path: key,
+        message: 'must not contain control characters',
       });
     }
   }
