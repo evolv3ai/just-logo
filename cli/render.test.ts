@@ -85,6 +85,7 @@ describe('parseGradient (AC4)', () => {
     )!;
     expect(g.kind).toBe('radial');
     if (g.kind === 'radial') {
+      expect(g.approximated).toBe(true);
       expect([g.cx, g.cy, g.r]).toEqual([0.5, 0.5, 0.7071]);
       expect(g.stops).toEqual([
         { color: 'rgba(255, 0, 0, 1)', offset: 0 },
@@ -94,26 +95,40 @@ describe('parseGradient (AC4)', () => {
     const plain = parseGradient('radial-gradient(#fff, #000)')!;
     expect(plain.kind).toBe('radial');
     expect(plain.stops).toHaveLength(2);
+    if (plain.kind === 'radial') expect(plain.approximated).toBe(false);
     const spec = resolveSpec({
       icon: 'lucide:rocket',
       background: 'radial-gradient(circle, #fff, #000)',
     });
-    const { svg, backgroundPassthrough } = renderSvg(
+    const { svg, backgroundPassthrough, backgroundApproximated } = renderSvg(
       spec,
       findIcon('lucide:rocket')!,
     );
     expect(backgroundPassthrough).toBe(false);
+    expect(backgroundApproximated).toBe(true);
+    const exact = renderSvg(
+      resolveSpec({
+        icon: 'lucide:rocket',
+        background: 'radial-gradient(#fff, #000)',
+      }),
+      findIcon('lucide:rocket')!,
+    );
+    expect(exact.backgroundApproximated).toBe(false);
     expect(svg).toContain(
       '<radialGradient id="bg" cx="0.5" cy="0.5" r="0.7071">',
     );
     expect(svg).toContain('fill="url(#bg)"');
   });
 
-  it('does not treat Object.prototype keys as side keywords', () => {
-    const g = linear('linear-gradient(constructor, #000, #fff)');
-    expect(g.stops).toHaveLength(3); // "constructor" is just an (invalid) colour stop
-    for (const v of [g.x1, g.y1, g.x2, g.y2])
-      expect(Number.isFinite(v)).toBe(true);
+  it('does not treat Object.prototype keys as side keywords, and rejects non-colour stops', () => {
+    // "constructor" is neither a keyword nor a colour, so this is not a convertible gradient
+    expect(
+      parseGradient('linear-gradient(constructor, #000, #fff)'),
+    ).toBeNull();
+    expect(
+      parseGradient('linear-gradient(90deg, #000, bogus 50%, #fff)'),
+    ).toBeNull();
+    expect(parseGradient('radial-gradient(#000, notacolour)')).toBeNull();
   });
 
   it('returns null for a plain colour so it passes through untouched', () => {

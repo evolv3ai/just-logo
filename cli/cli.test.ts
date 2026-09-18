@@ -82,9 +82,11 @@ describe('icons search (AC1)', () => {
       '--json',
     ]);
     expect(r.status).toBe(0);
-    const hits = JSON.parse(r.stdout) as { set: string }[];
+    const hits = JSON.parse(r.stdout) as { set: string; name: string }[];
+    expect(hits.length).toBeGreaterThan(0);
     expect(hits.length).toBeLessThanOrEqual(3);
     expect(hits.every((h) => h.set === 'tabler')).toBe(true);
+    expect(hits[0].name).toBe('heart');
   });
 
   it('lists the five sets', () => {
@@ -284,6 +286,27 @@ describe('format and default file name', () => {
     expect(r.status).toBe(0);
     expect(JSON.parse(r.stdout).backgroundPassthrough).toBe(true);
     expect(r.stderr).toContain('warning: background');
+  });
+
+  it('reports an approximated radial gradient in --json and on stderr', () => {
+    const r = run([
+      'render',
+      '--icon',
+      'lucide:star',
+      '--background',
+      'radial-gradient(circle at top, #fff, #000)',
+      '--out',
+      '-',
+      '--json',
+    ]);
+    expect(r.status).toBe(0);
+    const out = JSON.parse(r.stdout) as {
+      backgroundPassthrough: boolean;
+      backgroundApproximated: boolean;
+    };
+    expect(out.backgroundPassthrough).toBe(false);
+    expect(out.backgroundApproximated).toBe(true);
+    expect(r.stderr).toContain('warning: radial gradient');
   });
 });
 

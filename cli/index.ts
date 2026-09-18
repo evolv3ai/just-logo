@@ -230,7 +230,11 @@ async function runRender(argv: string[], json: boolean): Promise<void> {
   const result = renderSvg(spec, icon);
   if (result.backgroundPassthrough) {
     process.stderr.write(
-      `warning: background "${spec.background}" is not a colour or linear/radial gradient; it was written as-is and may not render\n`,
+      `warning: background "${spec.background}" is not a colour or a convertible gradient; it was written as-is and may not render\n`,
+    );
+  } else if (result.backgroundApproximated) {
+    process.stderr.write(
+      `warning: radial gradient shape/position was ignored; rendered centred with the default radius\n`,
     );
   }
   let bytes: Uint8Array;
@@ -255,6 +259,7 @@ async function runRender(argv: string[], json: boolean): Promise<void> {
           out: '-',
           spec,
           backgroundPassthrough: result.backgroundPassthrough,
+          backgroundApproximated: result.backgroundApproximated,
           svg: result.svg,
         },
         () => '',
@@ -274,6 +279,7 @@ async function runRender(argv: string[], json: boolean): Promise<void> {
     height: format === 'png' ? spec.pngSize : 512,
     spec,
     backgroundPassthrough: result.backgroundPassthrough,
+    backgroundApproximated: result.backgroundApproximated,
   };
   emit(
     json,

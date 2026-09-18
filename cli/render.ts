@@ -16,6 +16,8 @@ export type RadialGradient = {
   cy: number;
   r: number;
   stops: GradientStop[];
+  /** True when a shape, size or position prefix was present and ignored. */
+  approximated: boolean;
 };
 export type Gradient = LinearGradient | RadialGradient;
 
@@ -75,17 +77,21 @@ function parseAngle(token: string): number | null {
   }
 }
 
-function parseStops(parts: string[]): GradientStop[] {
-  return parts.map((part, index) => {
+/** Parse colour stops; null when any stop is not a colour, so nothing invalid is ever emitted as converted. */
+function parseStops(parts: string[]): GradientStop[] | null {
+  const stops: GradientStop[] = [];
+  for (const [index, part] of parts.entries()) {
     const stopMatch = /^(.*?)\s+(-?\d+(?:\.\d+)?)%$/.exec(part);
     const color = stopMatch ? stopMatch[1].trim() : part.trim();
+    if (!isPlainColor(color)) return null;
     const offset = stopMatch
       ? Number(stopMatch[2]) / 100
       : parts.length === 1
         ? 0
         : index / (parts.length - 1);
-    return { color, offset: round(Math.min(1, Math.max(0, offset))) };
-  });
+    stops.push({ color, offset: round(Math.min(1, Math.max(0, offset))) });
+  }
+  return stops;
 }
 
 /**
@@ -99,20 +105,27 @@ export function parseGradient(background: string): Gradient | null {
   const radial = /^\s*radial-gradient\((.*)\)\s*$/s.exec(background);
   if (radial) {
     const parts = splitTopLevel(radial[1]);
-    // Drop a leading shape/size/position prefix such as "circle", "ellipse at center",
-    // "closest-side at 30% 30%": it never starts with a colour or a colour function.
+    // A leading shape/size/position prefix such as "circle", "ellipse at center" or
+    // "closest-side at 30% 30%" never starts with a colour. It is dropped and the
+    // result is marked approximated, so callers can tell the geometry is the default.
+    let approximated = false;
     if (
       parts.length &&
       /^(circle|ellipse|closest-|farthest-|at\s|\d)/i.test(parts[0])
-    )
+    ) {
       parts.shift();
+      approximated = true;
+    }
     if (parts.length < 2) return null;
+    const stops = parseStops(parts);
+    if (!stops) return null;
     return {
       kind: 'radial',
       cx: 0.5,
       cy: 0.5,
       r: round(Math.SQRT1_2),
-      stops: parseStops(parts),
+      stops,
+      approximated,
     };
   }
 
@@ -134,6 +147,7 @@ export function parseGradient(background: string): Gradient | null {
   if (parts.length < 2 || !Number.isFinite(angle)) return null;
 
   const stops = parseStops(parts);
+  if (!stops) return null;
   {
     // CSS sizes the gradient line so the 0% and 100% points touch the box's
     // corners: on a square box (objectBoundingBox units, 1x1) its length is
@@ -190,8 +204,10 @@ function escapeAttr(value: string): string {
 
 export type RenderResult = {
   svg: string;
-  /** True when the background was not a colour or linear-gradient and was passed through as a fill. */
+  /** True when the background was not a colour or a convertible gradient and was written as-is. */
   backgroundPassthrough: boolean;
+  /** True when a radial gradient's shape/size/position was ignored and the default geometry used. */
+  backgroundApproximated: boolean;
   gradient: Gradient | null;
 };
 
@@ -203,6 +219,8 @@ export type RenderResult = {
 export function renderSvg(spec: LogoSpec, icon: IconItem): RenderResult {
   const gradient = parseGradient(spec.background);
   const backgroundPassthrough = !gradient && !isPlainColor(spec.background);
+  const backgroundApproximated =
+    gradient?.kind === 'radial' && gradient.approximated;
 
   const bw = spec.borderWidth;
   const side = CANVAS - spec.margin - bw;
@@ -256,7 +274,7 @@ export function renderSvg(spec: LogoSpec, icon: IconItem): RenderResult {
     rect +
     iconSvg +
     `</svg>`;
-  return { svg, backgroundPassthrough, gradient };
+  return { svg, backgroundPassthrough, backgroundApproximated, gradient };
 }
 
 /** Rasterise an SVG string to PNG bytes at the given edge length. Loads resvg lazily. */
