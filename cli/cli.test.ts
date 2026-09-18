@@ -20,6 +20,11 @@ function run(args: string[], cwd = ROOT): Run {
     {
       cwd,
       encoding: 'utf8',
+      // like bin.mjs: keep the caller's cwd but resolve the `@/` alias from the repo tsconfig
+      env: {
+        ...process.env,
+        TSX_TSCONFIG_PATH: path.join(ROOT, 'tsconfig.json'),
+      },
     },
   );
   return {
@@ -247,6 +252,38 @@ describe('png (AC6)', () => {
     ]);
     expect(r2.status).toBe(0);
     expect(pngSize(b)).toEqual({ width: 1024, height: 1024 });
+  });
+});
+
+describe('format and default file name', () => {
+  it('writes logo.png, not logo.svg, when only --format png is given', () => {
+    const dir = fs.mkdtempSync(path.join(tmp, 'fmt-'));
+    const r = run(
+      ['render', '--icon', 'lucide:star', '--format', 'png', '--json'],
+      dir,
+    );
+    expect(r.status).toBe(0);
+    const out = JSON.parse(r.stdout) as { out: string; format: string };
+    expect(out.format).toBe('png');
+    expect(path.basename(out.out)).toBe('logo.png');
+    expect(fs.existsSync(path.join(dir, 'logo.svg'))).toBe(false);
+    expect(pngSize(path.join(dir, 'logo.png')).width).toBe(512);
+  });
+
+  it('warns on stderr and flags passthrough for a background it cannot convert', () => {
+    const r = run([
+      'render',
+      '--icon',
+      'lucide:star',
+      '--background',
+      'conic-gradient(#fff, #000)',
+      '--out',
+      '-',
+      '--json',
+    ]);
+    expect(r.status).toBe(0);
+    expect(JSON.parse(r.stdout).backgroundPassthrough).toBe(true);
+    expect(r.stderr).toContain('warning: background');
   });
 });
 

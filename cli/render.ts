@@ -2,13 +2,22 @@ import type { IconItem } from '@/types';
 import { CANVAS, type LogoSpec } from './spec';
 
 export type GradientStop = { color: string; offset: number };
-export type Gradient = {
+export type LinearGradient = {
+  kind: 'linear';
   x1: number;
   y1: number;
   x2: number;
   y2: number;
   stops: GradientStop[];
 };
+export type RadialGradient = {
+  kind: 'radial';
+  cx: number;
+  cy: number;
+  r: number;
+  stops: GradientStop[];
+};
+export type Gradient = LinearGradient | RadialGradient;
 
 /** Split on commas that are not inside parentheses, so `rgba(1, 2, 3, .5)` stays whole. */
 function splitTopLevel(input: string): string[] {
@@ -49,31 +58,25 @@ function round(n: number): number {
   return Number(n.toFixed(4)) + 0;
 }
 
-/**
- * Parse a CSS `linear-gradient(...)` into SVG gradient geometry.
- * CSS angles run clockwise from "to top"; the SVG vector is expressed in
- * objectBoundingBox units through the centre of the box. Returns null for
- * anything that is not a linear-gradient, so callers can pass it through.
- */
-export function parseGradient(background: string): Gradient | null {
-  const match = /^\s*linear-gradient\((.*)\)\s*$/s.exec(background);
-  if (!match) return null;
-  const parts = splitTopLevel(match[1]);
-  if (parts.length === 0) return null;
-
-  let angle = 180; // CSS default: "to bottom"
-  let first = parts[0];
-  const angleMatch = /^(-?\d+(?:\.\d+)?)deg$/.exec(first);
-  if (angleMatch) {
-    angle = Number(angleMatch[1]);
-    parts.shift();
-  } else if (Object.hasOwn(SIDE_ANGLES, first)) {
-    angle = SIDE_ANGLES[first];
-    parts.shift();
+/** A CSS angle in any unit, as degrees; null if it is not an angle. */
+function parseAngle(token: string): number | null {
+  const m = /^(-?\d+(?:\.\d+)?)(deg|grad|rad|turn)$/i.exec(token.trim());
+  if (!m) return null;
+  const n = Number(m[1]);
+  switch (m[2].toLowerCase()) {
+    case 'deg':
+      return n;
+    case 'grad':
+      return n * 0.9;
+    case 'rad':
+      return (n * 180) / Math.PI;
+    default:
+      return n * 360;
   }
-  if (parts.length < 2 || !Number.isFinite(angle)) return null;
+}
 
-  const stops = parts.map((part, index) => {
+function parseStops(parts: string[]): GradientStop[] {
+  return parts.map((part, index) => {
     const stopMatch = /^(.*?)\s+(-?\d+(?:\.\d+)?)%$/.exec(part);
     const color = stopMatch ? stopMatch[1].trim() : part.trim();
     const offset = stopMatch
@@ -83,21 +86,71 @@ export function parseGradient(background: string): Gradient | null {
         : index / (parts.length - 1);
     return { color, offset: round(Math.min(1, Math.max(0, offset))) };
   });
+}
 
-  // CSS sizes the gradient line so the 0% and 100% points touch the box's
-  // corners: on a square box (objectBoundingBox units, 1x1) its length is
-  // |sin a| + |cos a|. A unit-length line would compress every diagonal gradient.
-  const rad = (angle * Math.PI) / 180;
-  const half = (Math.abs(Math.sin(rad)) + Math.abs(Math.cos(rad))) / 2;
-  const dx = Math.sin(rad) * half;
-  const dy = -Math.cos(rad) * half;
-  return {
-    x1: round(0.5 - dx),
-    y1: round(0.5 - dy),
-    x2: round(0.5 + dx),
-    y2: round(0.5 + dy),
-    stops,
-  };
+/**
+ * Parse a CSS `linear-gradient(...)` or `radial-gradient(...)` into SVG
+ * gradient geometry in objectBoundingBox units. CSS angles run clockwise from
+ * "to top". A radial gradient keeps its stops and is centred with the CSS
+ * default "farthest-corner" radius; shape and position prefixes are accepted
+ * and ignored. Returns null for anything else, so callers can pass it through.
+ */
+export function parseGradient(background: string): Gradient | null {
+  const radial = /^\s*radial-gradient\((.*)\)\s*$/s.exec(background);
+  if (radial) {
+    const parts = splitTopLevel(radial[1]);
+    // Drop a leading shape/size/position prefix such as "circle", "ellipse at center",
+    // "closest-side at 30% 30%": it never starts with a colour or a colour function.
+    if (
+      parts.length &&
+      /^(circle|ellipse|closest-|farthest-|at\s|\d)/i.test(parts[0])
+    )
+      parts.shift();
+    if (parts.length < 2) return null;
+    return {
+      kind: 'radial',
+      cx: 0.5,
+      cy: 0.5,
+      r: round(Math.SQRT1_2),
+      stops: parseStops(parts),
+    };
+  }
+
+  const match = /^\s*linear-gradient\((.*)\)\s*$/s.exec(background);
+  if (!match) return null;
+  const parts = splitTopLevel(match[1]);
+  if (parts.length === 0) return null;
+
+  let angle = 180; // CSS default: "to bottom"
+  const first = parts[0].trim().toLowerCase().replace(/\s+/g, ' ');
+  const asAngle = parseAngle(first);
+  if (asAngle !== null) {
+    angle = asAngle;
+    parts.shift();
+  } else if (Object.hasOwn(SIDE_ANGLES, first)) {
+    angle = SIDE_ANGLES[first];
+    parts.shift();
+  }
+  if (parts.length < 2 || !Number.isFinite(angle)) return null;
+
+  const stops = parseStops(parts);
+  {
+    // CSS sizes the gradient line so the 0% and 100% points touch the box's
+    // corners: on a square box (objectBoundingBox units, 1x1) its length is
+    // |sin a| + |cos a|. A unit-length line would compress every diagonal gradient.
+    const rad = (angle * Math.PI) / 180;
+    const half = (Math.abs(Math.sin(rad)) + Math.abs(Math.cos(rad))) / 2;
+    const dx = Math.sin(rad) * half;
+    const dy = -Math.cos(rad) * half;
+    return {
+      kind: 'linear',
+      x1: round(0.5 - dx),
+      y1: round(0.5 - dy),
+      x2: round(0.5 + dx),
+      y2: round(0.5 + dy),
+      stops,
+    };
+  }
 }
 
 /** The CSS named colours, so a bare word is only treated as a colour when it is one. */
@@ -157,16 +210,25 @@ export function renderSvg(spec: LogoSpec, icon: IconItem): RenderResult {
   const rx = Math.max(0, spec.radius - bw / 2);
   const fill = gradient ? 'url(#bg)' : escapeAttr(spec.background);
 
-  const defs = gradient
-    ? `<defs><linearGradient id="bg" x1="${gradient.x1}" y1="${gradient.y1}" x2="${gradient.x2}" y2="${gradient.y2}">` +
-      gradient.stops
-        .map(
-          (s) =>
-            `<stop offset="${s.offset}" stop-color="${escapeAttr(s.color)}"/>`,
-        )
-        .join('') +
-      `</linearGradient></defs>`
-    : '';
+  const stopsMarkup = (stops: GradientStop[]) =>
+    stops
+      .map(
+        (s) =>
+          `<stop offset="${s.offset}" stop-color="${escapeAttr(s.color)}"/>`,
+      )
+      .join('');
+  let defs = '';
+  if (gradient?.kind === 'linear') {
+    defs =
+      `<defs><linearGradient id="bg" x1="${gradient.x1}" y1="${gradient.y1}" x2="${gradient.x2}" y2="${gradient.y2}">` +
+      stopsMarkup(gradient.stops) +
+      `</linearGradient></defs>`;
+  } else if (gradient?.kind === 'radial') {
+    defs =
+      `<defs><radialGradient id="bg" cx="${gradient.cx}" cy="${gradient.cy}" r="${gradient.r}">` +
+      stopsMarkup(gradient.stops) +
+      `</radialGradient></defs>`;
+  }
 
   const border =
     bw > 0

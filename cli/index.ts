@@ -203,20 +203,36 @@ async function runRender(argv: string[], json: boolean): Promise<void> {
     );
   }
 
-  const out = values.out ?? 'logo.svg';
-  const format = (values.format ??
-    (out !== '-' && out.toLowerCase().endsWith('.png')
-      ? 'png'
-      : 'svg')) as string;
-  if (format !== 'svg' && format !== 'png') {
+  // Format comes from --format, else from the --out extension, else svg; the
+  // default file name follows the format so `--format png` never lands in logo.svg.
+  const explicitFormat = values.format;
+  if (
+    explicitFormat !== undefined &&
+    explicitFormat !== 'svg' &&
+    explicitFormat !== 'png'
+  ) {
     fail(
-      `--format must be svg or png, got "${format}"`,
+      `--format must be svg or png, got "${explicitFormat}"`,
       'just-logo render --icon lucide:rocket --format png',
       2,
     );
   }
+  const outFlag = values.out;
+  const format: 'svg' | 'png' =
+    (explicitFormat as 'svg' | 'png' | undefined) ??
+    (outFlag !== undefined &&
+    outFlag !== '-' &&
+    outFlag.toLowerCase().endsWith('.png')
+      ? 'png'
+      : 'svg');
+  const out = outFlag ?? `logo.${format}`;
 
   const result = renderSvg(spec, icon);
+  if (result.backgroundPassthrough) {
+    process.stderr.write(
+      `warning: background "${spec.background}" is not a colour or linear/radial gradient; it was written as-is and may not render\n`,
+    );
+  }
   let bytes: Uint8Array;
   if (format === 'png') {
     if (out === '-')
