@@ -101,7 +101,7 @@ Two things to know when a program reads the output:
 | `pnpm logo schema`                                            | Print the JSON schema of a render spec.                                                                                                                                               |
 | `pnpm logo render [flags] [--config <file>]`                  | Render a logo. `--out <path>` (default `logo.<format>`; a `.png` extension or `--format png` selects PNG, `-` prints SVG to stdout). Flags override `--config`, including `--preset`. |
 
-Render flags mirror the editor's settings: `--icon <set:name>` (required), `--preset <name>`, `--size`, `--rotate`, `--stroke-color`, `--stroke-width`, `--stroke-opacity`, `--fill-color`, `--fill-opacity`, `--background` (a colour, a CSS `linear-gradient(...)` or `radial-gradient(...)`), `--margin`, `--radius`, `--border-width`, `--border-color`, `--png-size` (default 512) and `--format svg|png`. Defaults are the editor's light-theme starting values (black icon on white); the editor itself opens in its dark theme, so pass colours or a `--preset` if you want that look.
+Render flags mirror the editor's settings: `--icon <set:name>` (required), `--preset <name>`, `--size`, `--rotate`, `--stroke-color`, `--stroke-width`, `--stroke-opacity`, `--fill-color`, `--fill-opacity`, `--background` (a colour, a CSS `linear-gradient(...)` or `radial-gradient(...)`), `--margin`, `--radius`, `--border-width`, `--border-color`, `--png-size` (default 512) and `--format svg|png`. Defaults are what the editor shows on first run: a white icon on black (its dark theme). Pass colours or a `--preset` for anything else.
 
 ### Example: an agent making a logo
 

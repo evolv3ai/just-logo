@@ -99,6 +99,24 @@ describe('spec schema (AC8)', () => {
     }
   });
 
+  it("defaults to the editor's first-run look: its dark theme, white on black", () => {
+    expect(DEFAULT_SPEC).toEqual({
+      size: 128,
+      rotate: 0,
+      strokeColor: '#fff',
+      strokeWidth: 2,
+      strokeOpacity: 100,
+      fillColor: '#000',
+      fillOpacity: 0,
+      background: '#000000',
+      margin: 0,
+      radius: 0,
+      borderWidth: 0,
+      borderColor: '#fff',
+      pngSize: 512,
+    });
+  });
+
   it('accepts the defaults plus an icon', () => {
     expect(validateSpec({ icon: 'lucide:rocket', ...DEFAULT_SPEC })).toEqual(
       [],

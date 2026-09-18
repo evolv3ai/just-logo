@@ -28,24 +28,23 @@ export type LogoSpec = {
 };
 
 /**
- * The editor's initial state in its light theme (see editor-provider.tsx).
- * The editor's own defaults follow its theme, and it opens in the dark theme
- * (white icon on black). The CLI has no theme, so it takes the light values:
- * black on white.
+ * The editor's initial state (see editor-provider.tsx). The editor's defaults
+ * follow its theme and it opens in the dark theme, so a first-run user sees a
+ * white icon on black; the CLI has no theme and uses those dark-theme values.
  */
 export const DEFAULT_SPEC: Omit<LogoSpec, 'icon'> = {
   size: 128,
   rotate: 0,
-  strokeColor: '#000',
+  strokeColor: '#fff',
   strokeWidth: 2,
   strokeOpacity: 100,
-  fillColor: '#fff',
+  fillColor: '#000',
   fillOpacity: 0,
-  background: '#ffffff',
+  background: '#000000',
   margin: 0,
   radius: 0,
   borderWidth: 0,
-  borderColor: '#000',
+  borderColor: '#fff',
   pngSize: 512,
 };
 
