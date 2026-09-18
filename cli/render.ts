@@ -77,21 +77,56 @@ function parseAngle(token: string): number | null {
   }
 }
 
-/** Parse colour stops; null when any stop is not a colour, so nothing invalid is ever emitted as converted. */
+/** Split "<colour> <position>%" without backtracking: the position is the last token. */
+function splitStop(part: string): { color: string; position: number | null } {
+  const t = part.trim().replace(/\s+/g, ' ');
+  const i = t.lastIndexOf(' ');
+  if (i === -1) return { color: t, position: null };
+  const tail = t.slice(i + 1);
+  if (!/^-?\d+(?:\.\d+)?%$/.test(tail)) return { color: t, position: null };
+  return { color: t.slice(0, i), position: Number(tail.slice(0, -1)) / 100 };
+}
+
+/**
+ * Parse colour stops. Positions follow the CSS rules: a missing first stop is
+ * 0%, a missing last stop is 100%, and a run of unpositioned stops is spaced
+ * evenly between its positioned neighbours. Positions outside 0..100% are
+ * clamped, which is what SVG does with offsets anyway. Returns null when any
+ * stop is not a colour, so nothing invalid is ever emitted as converted.
+ */
 function parseStops(parts: string[]): GradientStop[] | null {
-  const stops: GradientStop[] = [];
-  for (const [index, part] of parts.entries()) {
-    const stopMatch = /^(.*?)\s+(-?\d+(?:\.\d+)?)%$/.exec(part);
-    const color = stopMatch ? stopMatch[1].trim() : part.trim();
-    if (!isPlainColor(color)) return null;
-    const offset = stopMatch
-      ? Number(stopMatch[2]) / 100
-      : parts.length === 1
-        ? 0
-        : index / (parts.length - 1);
-    stops.push({ color, offset: round(Math.min(1, Math.max(0, offset))) });
+  const raw = parts.map(splitStop);
+  if (raw.some((r) => !isPlainColor(r.color))) return null;
+  const offsets: (number | null)[] = raw.map((r) => r.position);
+  if (offsets[0] === null) offsets[0] = 0;
+  if (offsets[offsets.length - 1] === null) offsets[offsets.length - 1] = 1;
+  // CSS: a positioned stop never precedes an earlier one; later stops are raised to match.
+  let floor = offsets[0] as number;
+  for (let i = 0; i < offsets.length; i += 1) {
+    const o = offsets[i];
+    if (o === null) continue;
+    offsets[i] = Math.max(o, floor);
+    floor = offsets[i] as number;
   }
-  return stops;
+  let i = 0;
+  while (i < offsets.length) {
+    if (offsets[i] !== null) {
+      i += 1;
+      continue;
+    }
+    let j = i;
+    while (offsets[j] === null) j += 1; // the next positioned stop; the last is always positioned
+    const from = offsets[i - 1] as number;
+    const to = offsets[j] as number;
+    const runs = j - i + 1;
+    for (let k = i; k < j; k += 1)
+      offsets[k] = from + ((to - from) * (k - i + 1)) / runs;
+    i = j;
+  }
+  return raw.map((r, k) => ({
+    color: r.color,
+    offset: round(Math.min(1, Math.max(0, offsets[k] as number))),
+  }));
 }
 
 /**
@@ -191,7 +226,13 @@ const NAMED_COLORS = new Set(
 export function isPlainColor(value: string): boolean {
   const v = value.trim();
   if (/^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(v)) return true;
-  if (/^(?:rgba?|hsla?)\(.*\)$/i.test(v)) return true;
+  // Functional colours: arguments may only be numbers, %, separators and angle/none keywords.
+  const fn = /^(?:rgba?|hsla?)\(\s*([^()]*)\)$/i.exec(v);
+  if (fn)
+    return (
+      /\d/.test(fn[1]) &&
+      /^[\d.%,\s/-]*(?:(?:deg|grad|rad|turn|none)[\d.%,\s/-]*)*$/i.test(fn[1])
+    );
   return NAMED_COLORS.has(v.toLowerCase());
 }
 
@@ -223,9 +264,8 @@ export function renderSvg(spec: LogoSpec, icon: IconItem): RenderResult {
     gradient?.kind === 'radial' && gradient.approximated;
 
   const bw = spec.borderWidth;
-  const side = CANVAS - spec.margin - bw;
-  const offset = spec.margin / 2 + bw / 2;
-  const rx = Math.max(0, spec.radius - bw / 2);
+  const outerSide = CANVAS - spec.margin;
+  const outerOffset = spec.margin / 2;
   const fill = gradient ? 'url(#bg)' : escapeAttr(spec.background);
 
   const stopsMarkup = (stops: GradientStop[]) =>
@@ -248,11 +288,21 @@ export function renderSvg(spec: LogoSpec, icon: IconItem): RenderResult {
       `</radialGradient></defs>`;
   }
 
-  const border =
-    bw > 0
-      ? ` stroke="${escapeAttr(spec.borderColor)}" stroke-width="${bw}"`
-      : '';
-  const rect = `<rect x="${offset}" y="${offset}" width="${side}" height="${side}" rx="${rx}" fill="${fill}"${border}/>`;
+  // CSS box model: the border is drawn inside the element, keeps the outer
+  // radius, and the background (a gradient's positioning box included) fills
+  // the padding box inside it. Two rects reproduce that exactly; one rect
+  // with a centred stroke would square off corners once bw > 2 * radius.
+  let rect: string;
+  if (bw > 0) {
+    const innerSide = Math.max(0, outerSide - 2 * bw);
+    const innerOffset = outerOffset + bw;
+    const innerRx = Math.max(0, spec.radius - bw);
+    rect =
+      `<rect x="${outerOffset}" y="${outerOffset}" width="${outerSide}" height="${outerSide}" rx="${spec.radius}" fill="${escapeAttr(spec.borderColor)}"/>` +
+      `<rect x="${innerOffset}" y="${innerOffset}" width="${innerSide}" height="${innerSide}" rx="${innerRx}" fill="${fill}"/>`;
+  } else {
+    rect = `<rect x="${outerOffset}" y="${outerOffset}" width="${outerSide}" height="${outerSide}" rx="${spec.radius}" fill="${fill}"/>`;
+  }
 
   const s = spec.size;
   const pos = (CANVAS - s) / 2;
@@ -284,6 +334,9 @@ export async function renderPng(
 ): Promise<Uint8Array> {
   let mod: typeof import('@resvg/resvg-js');
   try {
+    // Test hook: simulate the native module failing to load on this platform.
+    if (process.env.JUST_LOGO_DISABLE_RESVG === '1')
+      throw new Error('simulated load failure');
     mod = await import('@resvg/resvg-js');
   } catch (error) {
     throw new Error(

@@ -164,6 +164,12 @@ describe('config file and override (AC5)', () => {
     expect(out.spec.icon).toBe('tabler:heart');
     expect(out.spec.size).toBe(300);
     expect(out.svg).toContain('<svg x="106" y="106" width="300" height="300"');
+    // the icon that was drawn is the tabler heart, not just echoed in the spec
+    const shown = JSON.parse(
+      run(['icons', 'show', 'tabler:heart', '--json']).stdout,
+    ) as { body: string };
+    expect(shown.body.length).toBeGreaterThan(20);
+    expect(out.svg).toContain(shown.body);
   });
 
   it('lets --preset on the command line override colours from the config file', () => {
@@ -214,6 +220,30 @@ describe('config file and override (AC5)', () => {
     expect(JSON.parse(c.stdout).spec.strokeColor).toBe('#abcdef');
   });
 
+  it('reports a config directory and a missing file differently, both exit 1', () => {
+    const dir = fs.mkdtempSync(path.join(tmp, 'isdir-'));
+    const r = run(['render', '--config', dir, '--out', '-']);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('is a directory');
+    const r2 = run([
+      'render',
+      '--config',
+      path.join(tmp, 'nope.json'),
+      '--out',
+      '-',
+    ]);
+    expect(r2.status).toBe(1);
+    expect(r2.stderr).toContain('config file not found');
+  });
+
+  it('treats malformed JSON as a usage error, like other bad config content', () => {
+    const cfg = path.join(tmp, 'broken.json');
+    fs.writeFileSync(cfg, '{ not json');
+    const r = run(['render', '--config', cfg, '--out', '-']);
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain('not valid JSON');
+  });
+
   it('rejects a config that is not a JSON object with exit 2', () => {
     for (const body of ['null', '[]', '"x"']) {
       const cfg = path.join(tmp, 'notobj.json');
@@ -257,7 +287,112 @@ describe('png (AC6)', () => {
   });
 });
 
+describe('flag validation', () => {
+  it('rejects unknown flags on every command with exit 2', () => {
+    for (const cmd of [
+      ['icons', 'sets'],
+      ['icons', 'show', 'lucide:star'],
+      ['presets'],
+      ['schema'],
+      ['icons', 'search', 'x'],
+    ]) {
+      const r = run([...cmd, '--bogus']);
+      expect(r.status, cmd.join(' ')).toBe(2);
+      expect(r.stderr).toMatch(/^help: /m);
+    }
+  });
+
+  it('rejects empty, fractional, zero and negative --limit and empty numeric flags', () => {
+    for (const bad of ['0', '-1', '1.5', 'x', '']) {
+      const r = run(['icons', 'search', 'star', `--limit=${bad}`]);
+      expect(r.status, `--limit=${bad}`).toBe(2);
+      expect(r.stderr).toContain(
+        'help: just-logo icons search rocket --limit 5',
+      );
+    }
+    const r = run(['render', '--icon', 'lucide:star', '--size=', '--out', '-']);
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain('--size must be a number');
+  });
+
+  it('never lets user text forge a help: line on stderr', () => {
+    const r = run([
+      'render',
+      '--icon',
+      'lucide:star',
+      '--background',
+      'x\nhelp: rm -rf /',
+      '--out',
+      '-',
+    ]);
+    expect(r.status).toBe(0);
+    expect(r.stderr).not.toMatch(/^help: rm/m);
+  });
+});
+
 describe('format and default file name', () => {
+  it('refuses --format png with --out - and explains', () => {
+    const r = run([
+      'render',
+      '--icon',
+      'lucide:star',
+      '--format',
+      'png',
+      '--out',
+      '-',
+    ]);
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain('PNG cannot be written to stdout');
+  });
+
+  it('exits 1 with a useful help line when the PNG rasteriser cannot load', () => {
+    const result = spawnSync(
+      process.execPath,
+      [
+        TSX,
+        path.join(ROOT, 'cli', 'index.ts'),
+        'render',
+        '--icon',
+        'lucide:star',
+        '--out',
+        path.join(tmp, 'x.png'),
+        '--json',
+      ],
+      {
+        cwd: ROOT,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          TSX_TSCONFIG_PATH: path.join(ROOT, 'tsconfig.json'),
+          JUST_LOGO_DISABLE_RESVG: '1',
+        },
+      },
+    );
+    expect(result.status).toBe(1);
+    const out = JSON.parse(result.stdout) as { error: string; help: string };
+    expect(out.error).toContain('PNG rasteriser unavailable');
+    expect(out.help).toContain('--format svg');
+  });
+
+  it('uses one JSON shape for stdout and file output', () => {
+    const a = JSON.parse(
+      run(['render', '--icon', 'lucide:star', '--out', '-', '--json']).stdout,
+    ) as Record<string, unknown>;
+    const b = JSON.parse(
+      run([
+        'render',
+        '--icon',
+        'lucide:star',
+        '--out',
+        path.join(tmp, 'shape.svg'),
+        '--json',
+      ]).stdout,
+    ) as Record<string, unknown>;
+    expect(Object.keys(a).sort()).toEqual(Object.keys(b).sort());
+    expect(a.out).toBe('-');
+    expect(b.svg).toBe(a.svg);
+  });
+
   it('writes logo.png, not logo.svg, when only --format png is given', () => {
     const dir = fs.mkdtempSync(path.join(tmp, 'fmt-'));
     const r = run(
@@ -321,6 +456,40 @@ describe('json contract (AC7)', () => {
     ['render', '--icon', 'lucide:nope', '--out', '-'], // error path
     ['nonsense'], // usage path
   ];
+  it('returns real content for show, presets and schema', () => {
+    const show = JSON.parse(
+      run(['icons', 'show', 'lucide:star', '--json']).stdout,
+    ) as { id: string; body: string; svg: string };
+    expect(show.id).toBe('lucide:star');
+    expect(show.body).toContain('<');
+    expect(show.svg).toContain(show.body);
+    const text = run(['icons', 'show', 'lucide:star']);
+    expect(text.status).toBe(0);
+    expect(text.stdout).toContain('body: ');
+    expect(text.stdout).toContain('svg: <svg');
+    const presets = JSON.parse(run(['presets', '--json']).stdout) as {
+      name: string;
+      background: string;
+      strokeColor: string;
+    }[];
+    expect(presets.length).toBeGreaterThan(10);
+    expect(
+      presets.find((p) => p.name === 'Ocean Breeze')?.background,
+    ).toContain('#667eea');
+    expect(Object.keys(presets[0]).sort()).toEqual([
+      'background',
+      'borderColor',
+      'fillColor',
+      'name',
+      'strokeColor',
+      'strokeOpacity',
+    ]);
+    const schema = JSON.parse(run(['schema', '--json']).stdout) as {
+      properties: Record<string, unknown>;
+    };
+    expect(Object.keys(schema.properties)).toContain('background');
+  });
+
   for (const cmd of commands) {
     it(`emits exactly one JSON value for: ${cmd.join(' ')}`, () => {
       const r = run([...cmd, '--json']);
@@ -342,25 +511,40 @@ describe('json contract (AC7)', () => {
 
 describe('bin shim', () => {
   it('maps spawn failures and signals to exit 1 and passes child codes through', async () => {
-    const { exitFor } = await import('./bin.mjs');
+    const { exitFor, failureOutput } = await import('./bin.mjs');
     expect(exitFor({ status: 0, signal: null })).toEqual({
       code: 0,
-      message: null,
+      error: null,
+      help: null,
     });
     expect(exitFor({ status: 2, signal: null }).code).toBe(2);
     expect(exitFor({ status: null, signal: null }).code).toBe(1); // no status, no signal: still a failure
     const killed = exitFor({ status: null, signal: 'SIGKILL' });
     expect(killed.code).toBe(1);
-    expect(killed.message).toMatch(/^error: .*SIGKILL[\s\S]*\nhelp: /);
+    expect(killed.error).toContain('SIGKILL');
     const failed = exitFor({
       status: null,
       signal: null,
       error: new Error('ENOENT'),
     });
     expect(failed.code).toBe(1);
-    expect(failed.message).toMatch(
+    expect(failed.error).toBe('could not start just-logo: ENOENT');
+    // shim failures honour --json: one JSON object on stdout, error/help on stderr
+    const plain = failureOutput(failed, false);
+    expect(plain.stdout).toBe('');
+    expect(plain.stderr).toMatch(
       /^error: could not start just-logo: ENOENT\nhelp: /,
     );
+    const json = failureOutput(failed, true);
+    expect(JSON.parse(json.stdout)).toEqual({
+      error: failed.error,
+      help: failed.help,
+      exit: 1,
+    });
+    expect(failureOutput(exitFor({ status: 0, signal: null }), true)).toEqual({
+      stdout: '',
+      stderr: '',
+    });
   });
 
   it('runs through cli/bin.mjs from another directory', () => {

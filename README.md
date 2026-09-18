@@ -115,7 +115,7 @@ pnpm logo render --config logo.json --rotate=-15 --out logo.png --json
 # {"format":"png","out":"/abs/path/logo.png","bytes":...,"width":512,"height":512,"spec":{...}}
 ```
 
-Errors are machine-readable too: `error: <what>` and `help: <a runnable fix>` on stderr, and the same object on stdout with `--json`.
+Errors are machine-readable too: `error: <what>` and `help: <a runnable fix>` on stderr, and the same object on stdout with `--json`. Exit 1 means an I/O or rendering problem (missing config file, unknown icon, rasteriser unavailable); exit 2 means the command line or the config content is wrong. Every command rejects unknown flags.
 
 The CLI reuses the editor's icon cleaning and presets, so an SVG it renders has the same structure as the editor's export. Pixel-identical parity with the browser PNG is not a goal.
 

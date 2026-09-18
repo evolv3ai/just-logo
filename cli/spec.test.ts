@@ -23,6 +23,77 @@ describe('spec schema (AC8)', () => {
     expect(schema.properties.preset.enum).toEqual(PRESETS.map((p) => p.name));
   });
 
+  it('validates the defaults against the schema itself, and the schema agrees with the validator', () => {
+    // a small JSON-schema checker covering the keywords this schema uses
+    type Prop = {
+      type: string;
+      minimum?: number;
+      maximum?: number;
+      enum?: string[];
+      pattern?: string;
+      minLength?: number;
+      maxLength?: number;
+    };
+    const schema = specSchema() as unknown as {
+      required: string[];
+      additionalProperties: boolean;
+      properties: Record<string, Prop>;
+    };
+    const check = (value: Record<string, unknown>): string[] => {
+      const errs: string[] = [];
+      for (const r of schema.required)
+        if (!(r in value)) errs.push(`${r}: required`);
+      for (const [k, v] of Object.entries(value)) {
+        const p = schema.properties[k];
+        if (!p) {
+          if (!schema.additionalProperties) errs.push(`${k}: additional`);
+          continue;
+        }
+        if (p.type === 'string') {
+          if (typeof v !== 'string') errs.push(`${k}: type`);
+          else {
+            if (p.minLength !== undefined && v.length < p.minLength)
+              errs.push(`${k}: minLength`);
+            if (p.maxLength !== undefined && v.length > p.maxLength)
+              errs.push(`${k}: maxLength`);
+            if (p.pattern && !new RegExp(p.pattern).test(v))
+              errs.push(`${k}: pattern`);
+            if (p.enum && !p.enum.includes(v)) errs.push(`${k}: enum`);
+          }
+        } else {
+          if (typeof v !== 'number') errs.push(`${k}: type`);
+          else {
+            if (p.type === 'integer' && !Number.isInteger(v))
+              errs.push(`${k}: integer`);
+            if (p.minimum !== undefined && v < p.minimum)
+              errs.push(`${k}: minimum`);
+            if (p.maximum !== undefined && v > p.maximum)
+              errs.push(`${k}: maximum`);
+          }
+        }
+      }
+      return errs;
+    };
+    expect(check({ icon: 'lucide:rocket', ...DEFAULT_SPEC })).toEqual([]);
+    const samples: Record<string, unknown>[] = [
+      { icon: 'lucide:rocket' },
+      { icon: 'lucide:rocket', preset: 'Sunset', size: 12.5 },
+      { icon: 'rocket' },
+      { icon: 'lucide:rocket', strokeColor: '' },
+      { icon: 'lucide:rocket', background: 'x'.repeat(600) },
+      { icon: 'lucide:rocket', pngSize: 100.5 },
+      { icon: 'lucide:rocket', size: 9999 },
+      { icon: 'lucide:rocket', preset: 'Nope' },
+      { icon: 'lucide:rocket', bogus: 1 },
+      { icon: 'lucide:rocket', rotate: -180 },
+    ];
+    for (const sample of samples) {
+      expect(check(sample).length === 0, JSON.stringify(sample)).toBe(
+        validateSpec(sample).length === 0,
+      );
+    }
+  });
+
   it('accepts the defaults plus an icon', () => {
     expect(validateSpec({ icon: 'lucide:rocket', ...DEFAULT_SPEC })).toEqual(
       [],

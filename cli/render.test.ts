@@ -60,9 +60,37 @@ describe('parseGradient (AC4)', () => {
     expect([ne.x1, ne.y1, ne.x2, ne.y2]).toEqual([0, 1, 1, 0]);
   });
 
-  it('spaces stops evenly when no percentages are given', () => {
-    const g = linear('linear-gradient(90deg, red, white, blue)');
-    expect(g.stops.map((s) => s.offset)).toEqual([0, 0.5, 1]);
+  it('positions stops by the CSS rules: ends default to 0/100, runs are spaced between neighbours', () => {
+    expect(
+      linear('linear-gradient(90deg, red, white, blue)').stops.map(
+        (s) => s.offset,
+      ),
+    ).toEqual([0, 0.5, 1]);
+    expect(
+      linear('linear-gradient(90deg, red, white 20%, blue)').stops.map(
+        (s) => s.offset,
+      ),
+    ).toEqual([0, 0.2, 1]);
+    expect(
+      linear(
+        'linear-gradient(90deg, red, white 30%, blue, black, yellow 90%, green)',
+      ).stops.map((s) => s.offset),
+    ).toEqual([0, 0.3, 0.5, 0.7, 0.9, 1]);
+    // a later stop positioned before an earlier one is raised to it, and out-of-range values clamp
+    expect(
+      linear('linear-gradient(90deg, red 60%, white 20%, blue 150%)').stops.map(
+        (s) => s.offset,
+      ),
+    ).toEqual([0.6, 0.6, 1]);
+  });
+
+  it('does not backtrack on long runs of spaces inside a stop', () => {
+    const spaces = ' '.repeat(5000);
+    const t0 = Date.now();
+    expect(
+      parseGradient(`linear-gradient(90deg, red${spaces}x, blue)`),
+    ).toBeNull();
+    expect(Date.now() - t0).toBeLessThan(500);
   });
 
   it('accepts turn, rad and grad angles and case or spacing variants of side keywords', () => {
@@ -163,7 +191,7 @@ describe('renderSvg (AC3)', () => {
     expect(svg).toMatchSnapshot();
   });
 
-  it('applies margin, radius and an inside border like the editor box model', () => {
+  it('applies margin, radius and an inside border like the CSS box model', () => {
     const spec = resolveSpec({
       icon: 'lucide:rocket',
       background: '#123456',
@@ -173,9 +201,39 @@ describe('renderSvg (AC3)', () => {
       borderColor: '#abcdef',
     });
     const { svg } = renderSvg(spec, rocket);
-    // side = 512 - 32 - 8, offset = 16 + 4, rx = 64 - 4
+    // outer box: side 480 at offset 16, outer radius kept; inner box: side 464 at offset 24, radius 64 - 8
     expect(svg).toContain(
-      '<rect x="20" y="20" width="472" height="472" rx="60" fill="#123456" stroke="#abcdef" stroke-width="8"/>',
+      '<rect x="16" y="16" width="480" height="480" rx="64" fill="#abcdef"/>' +
+        '<rect x="24" y="24" width="464" height="464" rx="56" fill="#123456"/>',
+    );
+  });
+
+  it('keeps the outer radius when the border is wider than twice the radius', () => {
+    const spec = resolveSpec({
+      icon: 'lucide:rocket',
+      background: '#fff',
+      radius: 16,
+      borderWidth: 64,
+      borderColor: '#000',
+    });
+    const { svg } = renderSvg(spec, rocket);
+    expect(svg).toContain(
+      '<rect x="0" y="0" width="512" height="512" rx="16" fill="#000"/>',
+    );
+    expect(svg).toContain(
+      '<rect x="64" y="64" width="384" height="384" rx="0" fill="#fff"/>',
+    );
+  });
+
+  it('positions a gradient inside the border, like CSS background-origin: padding-box', () => {
+    const spec = resolveSpec({
+      icon: 'lucide:rocket',
+      preset: 'Sunset',
+      borderWidth: 10,
+    });
+    const { svg } = renderSvg(spec, rocket);
+    expect(svg).toContain(
+      '<rect x="10" y="10" width="492" height="492" rx="0" fill="url(#bg)"/>',
     );
   });
 
@@ -219,6 +277,10 @@ describe('renderSvg (AC3)', () => {
       ).toBe(false);
     }
     expect(isPlainColor('#ggg')).toBe(false);
+    expect(isPlainColor('rgb(nonsense)')).toBe(false);
+    expect(isPlainColor('rgb(255 0 0 / 50%)')).toBe(true);
+    expect(isPlainColor('hsl(120deg 50% 50%)')).toBe(true);
+    expect(isPlainColor('rgb(1,2,3)) onerror=x')).toBe(false);
   });
 
   it('is deterministic', () => {

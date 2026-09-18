@@ -17,7 +17,7 @@ export type LogoSpec = {
   strokeOpacity: number;
   fillColor: string;
   fillOpacity: number;
-  /** CSS colour or `linear-gradient(...)`, exactly as the editor stores it. */
+  /** CSS colour, `linear-gradient(...)` or `radial-gradient(...)`, exactly as the editor stores it. */
   background: string;
   margin: number;
   radius: number;
@@ -73,6 +73,9 @@ export const NUMBER_RULES: Record<
   pngSize: { min: 16, max: 4096, integer: true },
 };
 
+/** Every string value is bounded, so a hostile config cannot feed unbounded text to the parsers. */
+export const MAX_STRING = 512;
+
 const STRING_KEYS = [
   'icon',
   'preset',
@@ -107,6 +110,8 @@ export function specSchema() {
     properties: {
       icon: {
         type: 'string',
+        minLength: 3,
+        maxLength: MAX_STRING,
         pattern: '^[a-z0-9-]+:[a-z0-9-]+$',
         description: `Icon id as <set>:<name>. Sets: ${AVAILABLE_ICON_SETS.join(', ')}. Find names with \`just-logo icons search\`.`,
       },
@@ -116,15 +121,32 @@ export function specSchema() {
         description:
           'Preset name. Sets strokeColor, fillColor, strokeOpacity, background and borderColor; explicit values override it.',
       },
-      strokeColor: { type: 'string', default: DEFAULT_SPEC.strokeColor },
-      fillColor: { type: 'string', default: DEFAULT_SPEC.fillColor },
+      strokeColor: {
+        type: 'string',
+        minLength: 1,
+        maxLength: MAX_STRING,
+        default: DEFAULT_SPEC.strokeColor,
+      },
+      fillColor: {
+        type: 'string',
+        minLength: 1,
+        maxLength: MAX_STRING,
+        default: DEFAULT_SPEC.fillColor,
+      },
       background: {
         type: 'string',
+        minLength: 1,
+        maxLength: MAX_STRING,
         default: DEFAULT_SPEC.background,
         description:
-          'A CSS colour or a CSS linear-gradient(<angle>deg, <colour> <stop>%, ...). Gradients become an SVG <linearGradient>.',
+          'A CSS colour, a linear-gradient(<angle>, <colour> <stop>%, ...) or a radial-gradient(...). Linear gradients become an SVG <linearGradient> with CSS geometry; radial ones become a centred <radialGradient> (shape and position are ignored and reported as backgroundApproximated). Anything else is written as-is and reported as backgroundPassthrough.',
       },
-      borderColor: { type: 'string', default: DEFAULT_SPEC.borderColor },
+      borderColor: {
+        type: 'string',
+        minLength: 1,
+        maxLength: MAX_STRING,
+        default: DEFAULT_SPEC.borderColor,
+      },
       ...numberProps,
     },
   };
@@ -154,6 +176,7 @@ export function validateSpec(candidate: unknown): ValidationError[] {
   }
   if (
     typeof obj.icon !== 'string' ||
+    obj.icon.length > MAX_STRING ||
     !/^[a-z0-9-]+:[a-z0-9-]+$/.test(obj.icon)
   ) {
     errors.push({ path: 'icon', message: 'required, format <set>:<name>' });
@@ -171,11 +194,14 @@ export function validateSpec(candidate: unknown): ValidationError[] {
   }
   for (const key of STRING_KEYS) {
     if (key === 'icon' || key === 'preset') continue;
-    if (
-      obj[key] !== undefined &&
-      (typeof obj[key] !== 'string' || obj[key] === '')
-    ) {
+    const v = obj[key];
+    if (v !== undefined && (typeof v !== 'string' || v === '')) {
       errors.push({ path: key, message: 'must be a non-empty string' });
+    } else if (typeof v === 'string' && v.length > MAX_STRING) {
+      errors.push({
+        path: key,
+        message: `must be at most ${MAX_STRING} characters`,
+      });
     }
   }
   for (const [key, rule] of Object.entries(NUMBER_RULES)) {
