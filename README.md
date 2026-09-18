@@ -81,6 +81,44 @@ To run this project locally, follow these steps:
    pnpm dev
    ```
 
+## 🤖 CLI (headless, agent-friendly)
+
+Everything the editor does, from a terminal and without a browser: search the same five icon libraries, use the same presets, and export the same logo to SVG or PNG. Every command takes `--json` and prints exactly one JSON value, with exit codes `0` ok, `1` error, `2` usage error, so a coding agent can drive it end to end.
+
+After `pnpm install`, run it as `pnpm logo <command>` (or `npx tsx cli/index.ts`). `pnpm link --global` makes it available as `just-logo`.
+
+| Command                                                       | What it does                                                                                                                     |
+| ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm logo icons sets`                                        | List the icon sets.                                                                                                              |
+| `pnpm logo icons search <query> [--set <name>] [--limit <n>]` | Fuzzy-search icon names. Results carry an `id` like `lucide:rocket`.                                                             |
+| `pnpm logo icons show <set:name>`                             | Print one icon's body and a bare SVG of it.                                                                                      |
+| `pnpm logo presets`                                           | List the presets and their colours.                                                                                              |
+| `pnpm logo schema`                                            | Print the JSON schema of a render spec.                                                                                          |
+| `pnpm logo render [flags] [--config <file>]`                  | Render a logo. `--out <path>` (default `logo.svg`, `.png` switches format, `-` prints SVG to stdout). Flags override `--config`. |
+
+Render flags mirror the editor's settings: `--icon <set:name>` (required), `--preset <name>`, `--size`, `--rotate`, `--stroke-color`, `--stroke-width`, `--stroke-opacity`, `--fill-color`, `--fill-opacity`, `--background` (a colour or a CSS `linear-gradient(...)`), `--margin`, `--radius`, `--border-width`, `--border-color`, `--png-size` (default 512) and `--format svg|png`.
+
+### Example: an agent making a logo
+
+```bash
+# 1. find an icon
+pnpm logo icons search rocket --limit 3 --json
+# [{"id":"lucide:rocket","set":"lucide","name":"rocket","score":0}, ...]
+
+# 2. write a spec (validate it against `pnpm logo schema` if you like)
+cat > logo.json <<'EOF'
+{ "icon": "lucide:rocket", "preset": "Ocean Breeze", "size": 300, "radius": 96, "margin": 32 }
+EOF
+
+# 3. render it, overriding one value on the way
+pnpm logo render --config logo.json --rotate=-15 --out logo.png --json
+# {"format":"png","out":"/abs/path/logo.png","bytes":...,"width":512,"height":512,"spec":{...}}
+```
+
+Errors are machine-readable too: `error: <what>` and `help: <a runnable fix>` on stderr, and the same object on stdout with `--json`.
+
+The CLI reuses the editor's icon cleaning and presets, so an SVG it renders has the same structure as the editor's export. Pixel-identical parity with the browser PNG is not a goal.
+
 ## 📚 Using Other Icon Libraries
 
 You can expand the icon selection by adding other icon libraries supported by [Iconify](https://icon-sets.iconify.design/).
@@ -96,7 +134,7 @@ You can expand the icon selection by adding other icon libraries supported by [I
 
 Contributions are welcome!
 
-Feature requests and ideas should be discussed via issues first.  
+Feature requests and ideas should be discussed via issues first.
 
 Pull requests are welcome for bug fixes and small, focused improvements.
 
