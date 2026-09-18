@@ -5,6 +5,8 @@ import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { PRESETS } from '@/lib/constants';
+
 const ROOT = path.resolve(__dirname, '..');
 // Resolve tsx's entry and run it with the current node binary, so the tests
 // do not depend on a POSIX-only node_modules/.bin launcher.
@@ -430,6 +432,64 @@ function runHelpLine(stderr: string, cwd: string): Run {
   return run(command.split(' '), cwd);
 }
 
+describe('render defaults', () => {
+  it("draws the editor's first-run look when only --icon is given: white on black", () => {
+    const r = run(['render', '--icon', 'lucide:star', '--out', '-', '--json']);
+    expect(r.status).toBe(0);
+    const out = JSON.parse(r.stdout) as {
+      spec: Record<string, unknown>;
+      svg: string;
+    };
+    expect(out.spec).toEqual({
+      icon: 'lucide:star',
+      size: 128,
+      rotate: 0,
+      strokeColor: '#fff',
+      strokeWidth: 2,
+      strokeOpacity: 100,
+      fillColor: '#000',
+      fillOpacity: 0,
+      background: '#000000',
+      margin: 0,
+      radius: 0,
+      borderWidth: 0,
+      borderColor: '#fff',
+      pngSize: 512,
+    });
+    expect(out.svg).toContain(
+      '<rect x="0" y="0" width="512" height="512" rx="0" fill="#000000"/>',
+    );
+    expect(out.svg).toContain(
+      '<svg x="192" y="192" width="128" height="128" viewBox="0 0 24 24" preserveAspectRatio="none" ' +
+        'color="#fff" stroke-width="2" stroke-opacity="1" fill="#000" fill-opacity="0">',
+    );
+    expect(out.svg).not.toContain('<path d="M0 0'); // no border ring at width 0
+  });
+
+  it('paints the default look into the PNG: black corners, white icon pixels', async () => {
+    const file = path.join(tmp, 'default-look.png');
+    expect(run(['render', '--icon', 'lucide:star', '--out', file]).status).toBe(
+      0,
+    );
+    const { Resvg } = await import('@resvg/resvg-js');
+    // decode by rendering the PNG inside an SVG image: resvg is the only decoder here
+    const b64 = fs.readFileSync(file).toString('base64');
+    const px = new Resvg(
+      `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="512" height="512"><image width="512" height="512" xlink:href="data:image/png;base64,${b64}"/></svg>`,
+    ).render().pixels;
+    const at = (x: number, y: number) => [
+      ...px.subarray((y * 512 + x) * 4, (y * 512 + x) * 4 + 4),
+    ];
+    expect(at(2, 2)).toEqual([0, 0, 0, 255]);
+    expect(at(509, 509)).toEqual([0, 0, 0, 255]);
+    let white = 0;
+    for (let i = 0; i < px.length; i += 4)
+      if (px[i] > 240 && px[i + 1] > 240 && px[i + 2] > 240) white += 1;
+    expect(white).toBeGreaterThan(500); // the star's outline
+    expect(white).toBeLessThan(128 * 128); // and only the outline
+  });
+});
+
 describe('render flags', () => {
   it('maps every flag onto its own setting, in the spec and in the drawing', () => {
     const r = run([
@@ -540,6 +600,21 @@ describe('render flags', () => {
     expect(fs.readFileSync(path.join(dir, 'logo.svg'), 'utf8')).toContain(
       'rotate(-15 256 256)',
     );
+  });
+
+  it('picks the negative-number help from the command even when --json comes first', () => {
+    const r = run([
+      '--json',
+      'render',
+      '--icon',
+      'lucide:star',
+      '--rotate',
+      '-15',
+    ]);
+    expect(r.status).toBe(2);
+    expect(JSON.parse(r.stdout).help).toContain('just-logo render');
+    const s = run(['--json', 'icons', 'search', 'star', '--limit', '-5']);
+    expect(JSON.parse(s.stdout).help).toContain('just-logo icons search');
   });
 
   it('suggests a search, not a render, for a bare negative --limit', () => {
@@ -729,6 +804,45 @@ describe('icons errors', () => {
     }
   });
 
+  it('ranks the exact name first, then names that start with the query', () => {
+    const ids = (args: string[]) =>
+      (
+        JSON.parse(run(['icons', 'search', ...args, '--json']).stdout) as {
+          id: string;
+          name: string;
+        }[]
+      ).map((h) => h.name);
+    const star = ids(['star', '--limit', '5']);
+    expect(star[0]).toBe('star');
+    // one exact hit per set that has it, before anything longer
+    const exact = star.filter((n) => n === 'star').length;
+    expect(exact).toBeGreaterThanOrEqual(2);
+    expect(star.slice(exact).every((n) => n.startsWith('star'))).toBe(true);
+    expect(ids(['heart', '--set', 'lucide', '--limit', '3'])[0]).toBe('heart');
+    // a two-word query matches the hyphenated name
+    expect(ids(['arrow up', '--limit', '1'])).toEqual(['arrow-up']);
+  });
+
+  it('shows a fill-only icon with a stroke, like the editor thumbnail, so it is not blank', () => {
+    const shown = JSON.parse(
+      run(['icons', 'show', 'tabler:heart-filled', '--json']).stdout,
+    ) as { body: string; svg: string };
+    expect(shown.body).not.toContain('fill='); // the editor's cleaning strips it
+    expect(shown.svg).toContain(
+      'color="#000" stroke="currentColor" stroke-width="2" fill="none">',
+    );
+  });
+
+  it('exits 2 for an unknown command and points at the usage', () => {
+    const r = run(['frobnicate']);
+    expect(r.status).toBe(2);
+    expect(r.stdout).toBe('');
+    expect(r.stderr).toBe(
+      'error: unknown command: frobnicate\nhelp: just-logo --help\n',
+    );
+    expect(runHelpLine(r.stderr, tmp).stdout).toContain('just-logo <command>');
+  });
+
   it('returns 20 results by default and says so when nothing matches', () => {
     const hits = JSON.parse(
       run(['icons', 'search', 'arrow', '--json']).stdout,
@@ -903,6 +1017,67 @@ describe('format and default file name', () => {
     expect(out.help).toContain('--format svg');
   });
 
+  it('tells a rasteriser that rejected the document from one that is missing', () => {
+    const result = spawnSync(
+      process.execPath,
+      [
+        TSX,
+        path.join(ROOT, 'cli', 'index.ts'),
+        'render',
+        '--icon',
+        'lucide:star',
+        '--out',
+        path.join(tmp, 'y.png'),
+        '--json',
+      ],
+      {
+        cwd: ROOT,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          TSX_TSCONFIG_PATH: path.join(ROOT, 'tsconfig.json'),
+          JUST_LOGO_FAIL_RASTER: '1',
+        },
+      },
+    );
+    expect(result.status).toBe(1);
+    const out = JSON.parse(result.stdout) as { error: string; help: string };
+    expect(out.error).toBe('PNG rendering failed: simulated raster failure');
+    expect(out.error).not.toContain('unavailable');
+    expect(out.help).not.toContain('pnpm install');
+    expect(out.help).toContain(
+      'just-logo render --icon lucide:star --format=svg',
+    );
+    expect(fs.existsSync(path.join(tmp, 'y.png'))).toBe(false);
+  });
+
+  it('strips control characters from the path in the success line', () => {
+    const dir = fs.mkdtempSync(path.join(tmp, 'ctl-'));
+    const r = run(
+      ['render', '--icon', 'lucide:star', '--out', 'a\u001b[31mb.svg'],
+      dir,
+    );
+    expect(r.status).toBe(0);
+    expect(r.stdout).toMatch(
+      /^wrote .*a \[31mb\.svg \(svg, 512x512, \d+ bytes\)\n$/,
+    );
+    expect(r.stdout).not.toContain('\u001b');
+    // --json keeps the real path; JSON escaping makes it safe to print
+    const j = run(
+      [
+        'render',
+        '--icon',
+        'lucide:star',
+        '--out',
+        'a\u001b[31mb.svg',
+        '--json',
+      ],
+      dir,
+    );
+    expect(j.stdout).not.toContain('\u001b');
+    expect(path.basename(JSON.parse(j.stdout).out)).toBe('a\u001b[31mb.svg');
+  });
+
   it('uses one JSON shape for stdout and file output', () => {
     const a = JSON.parse(
       run(['render', '--icon', 'lucide:star', '--out', '-', '--json']).stdout,
@@ -1015,6 +1190,13 @@ describe('approximation warnings', () => {
     expect(warnings[0]).toContain(BORDER);
   });
 
+  it('warns about a gradient with a see-through stop', () => {
+    const { warnings, out } = render('linear-gradient(red, transparent)', []);
+    expect(out.backgroundApproximations).toEqual(['translucent-stops']);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('a stop is not opaque');
+  });
+
   it('prints both warnings when both approximations apply', () => {
     const { warnings, out } = render(
       'radial-gradient(circle, #fff, #000)',
@@ -1083,10 +1265,30 @@ describe('json contract (AC7)', () => {
       background: string;
       strokeColor: string;
     }[];
+    // every preset, in the editor's order, each field from its own source
+    expect(presets).toEqual(
+      PRESETS.map((p) => ({
+        name: p.name,
+        strokeColor: p.icon.strokeColor,
+        strokeOpacity: p.icon.strokeOpacity,
+        fillColor: p.icon.fillColor,
+        background: p.background.background,
+        borderColor: p.background.borderColor,
+      })),
+    );
     expect(presets.length).toBeGreaterThan(10);
-    expect(
-      presets.find((p) => p.name === 'Ocean Breeze')?.background,
-    ).toContain('#667eea');
+    // one row written out by hand, so a field swapped at both ends still fails
+    expect(presets.find((p) => p.name === 'Ocean Breeze')).toEqual({
+      name: 'Ocean Breeze',
+      strokeColor: '#ffffff',
+      strokeOpacity: 100,
+      fillColor: '#667eea',
+      background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+      borderColor: '#667eea',
+    });
+    // the text form names every preset too
+    const presetText = run(['presets']).stdout;
+    for (const p of PRESETS) expect(presetText).toContain(`${p.name}\n`);
     expect(Object.keys(presets[0]).sort()).toEqual([
       'background',
       'borderColor',

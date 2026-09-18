@@ -215,7 +215,8 @@ export function validateSpec(candidate: unknown): ValidationError[] {
     const v = obj[key];
     if (v !== undefined && (typeof v !== 'string' || v === '')) {
       errors.push({ path: key, message: 'must be a non-empty string' });
-    } else if (typeof v === 'string' && v.length > MAX_STRING) {
+    } else if (typeof v === 'string' && [...v].length > MAX_STRING) {
+      // code points, which is what JSON Schema's maxLength counts
       errors.push({
         path: key,
         message: `must be at most ${MAX_STRING} characters`,

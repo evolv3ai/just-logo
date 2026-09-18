@@ -40,7 +40,9 @@ function splitTopLevel(input: string): string[] {
       current += ch;
     }
   }
-  if (current.trim()) parts.push(current.trim());
+  // An empty part (trailing or doubled comma) is kept: it is not a colour, so
+  // the gradient is reported as not convertible instead of quietly repaired.
+  parts.push(current.trim());
   return parts;
 }
 
@@ -68,14 +70,14 @@ function round(n: number): number {
 const CSS_NUMBER = '[+-]?(?:\\d*\\.)?\\d+(?:e[+-]?\\d+)?';
 const ANGLE = new RegExp(`^(${CSS_NUMBER})(deg|grad|rad|turn)$`, 'i');
 const PERCENTAGE = new RegExp(`^${CSS_NUMBER}%$`, 'i');
-const COLOR_ARGUMENT = new RegExp(
-  `^(?:${CSS_NUMBER}(?:%|deg|grad|rad|turn)?|none)$`,
-  'i',
-);
+const PLAIN_NUMBER = new RegExp(`^${CSS_NUMBER}$`, 'i');
 
 /** A CSS angle in any unit, as degrees; null if it is not an angle. */
 function parseAngle(token: string): number | null {
-  const m = ANGLE.exec(token.trim());
+  const t = token.trim();
+  // CSS lets a zero angle drop its unit; browsers accept it in gradients.
+  if (PLAIN_NUMBER.test(t) && Number(t) === 0) return 0;
+  const m = ANGLE.exec(t);
   if (!m) return null;
   const n = Number(m[1]);
   switch (m[2].toLowerCase()) {
@@ -168,7 +170,7 @@ function fitStops(
  * and ignored. Returns null for anything else, so callers can pass it through.
  */
 export function parseGradient(background: string): Gradient | null {
-  const radial = /^\s*radial-gradient\((.*)\)\s*$/s.exec(background);
+  const radial = /^\s*radial-gradient\((.*)\)\s*$/is.exec(background);
   if (radial) {
     const parts = splitTopLevel(radial[1]);
     // A leading shape/size/position prefix such as "circle", "ellipse at center" or
@@ -199,7 +201,7 @@ export function parseGradient(background: string): Gradient | null {
     };
   }
 
-  const match = /^\s*linear-gradient\((.*)\)\s*$/s.exec(background);
+  const match = /^\s*linear-gradient\((.*)\)\s*$/is.exec(background);
   if (!match) return null;
   const parts = splitTopLevel(match[1]);
   if (parts.length === 0) return null;
@@ -240,7 +242,12 @@ export function parseGradient(background: string): Gradient | null {
   }
 }
 
-/** The CSS named colours, so a bare word is only treated as a colour when it is one. */
+/**
+ * The CSS named colours, so a bare word is only treated as a colour when it is
+ * one. `currentcolor` is left out on purpose: in the editor it means the page's
+ * foreground colour, which a standalone SVG does not have, so it is passed
+ * through and reported rather than silently drawn black.
+ */
 const NAMED_COLORS = new Set(
   (
     'aliceblue antiquewhite aqua aquamarine azure beige bisque black blanchedalmond blue blueviolet brown burlywood ' +
@@ -256,7 +263,7 @@ const NAMED_COLORS = new Set(
     'palegoldenrod palegreen paleturquoise palevioletred papayawhip peachpuff peru pink plum powderblue purple ' +
     'rebeccapurple red rosybrown royalblue saddlebrown salmon sandybrown seagreen seashell sienna silver skyblue ' +
     'slateblue slategray slategrey snow springgreen steelblue tan teal thistle tomato transparent turquoise violet wheat ' +
-    'white whitesmoke yellow yellowgreen currentcolor'
+    'white whitesmoke yellow yellowgreen'
   ).split(' '),
 );
 
@@ -269,24 +276,47 @@ export function isPlainColor(value: string): boolean {
 }
 
 /**
- * The arguments of an rgb()/rgba()/hsl()/hsla() colour: three channels and an
- * optional alpha, each a number, percentage, angle or `none`, with at most one
- * `/` and that only before the alpha. Null for anything else, `rgb(1)` included.
+ * The arguments of an rgb()/rgba()/hsl()/hsla() colour, or null when the form
+ * is not one CSS accepts. Two syntaxes, never mixed: the legacy one separates
+ * everything with commas (alpha included) and has no `none`; the modern one
+ * separates channels with spaces and puts the alpha after a `/`. A hue may
+ * carry an angle unit; rgb channels are all numbers or all percentages in the
+ * legacy form; `rgb(1)` and `rgb(1deg 2 3)` are not colours.
  */
 function colorArguments(value: string): string[] | null {
-  const fn = /^(?:rgba?|hsla?)\(([^()]*)\)$/i.exec(value.trim());
+  const fn = /^(rgb|hsl)a?\(([^()]*)\)$/i.exec(value.trim());
   if (!fn) return null;
-  const [channels, alpha, ...extra] = fn[1].split('/');
-  if (extra.length > 0) return null;
-  const tokens = (s: string) => s.split(/[\s,]+/).filter((t) => t !== '');
-  const args = tokens(channels);
-  if (alpha !== undefined) {
-    const a = tokens(alpha);
-    if (args.length !== 3 || a.length !== 1) return null;
-    args.push(a[0]);
+  const hsl = fn[1].toLowerCase() === 'hsl';
+  const body = fn[2].trim();
+  const legacy = body.includes(',');
+  let args: string[];
+  if (legacy) {
+    if (body.includes('/')) return null;
+    args = body.split(',').map((t) => t.trim());
+  } else {
+    const [channels, alpha, ...extra] = body.split('/');
+    if (extra.length > 0) return null;
+    args = channels.split(/\s+/).filter((t) => t !== '');
+    if (args.length !== 3) return null;
+    if (alpha !== undefined) {
+      const a = alpha.trim();
+      if (a === '' || /\s/.test(a)) return null;
+      args.push(a);
+    }
   }
   if (args.length !== 3 && args.length !== 4) return null;
-  return args.every((t) => COLOR_ARGUMENT.test(t)) ? args : null;
+  const ok = args.every((t, i) => {
+    if (t.toLowerCase() === 'none') return !legacy;
+    if (i === 0 && hsl) return PLAIN_NUMBER.test(t) || ANGLE.test(t);
+    if (hsl && legacy && (i === 1 || i === 2)) return PERCENTAGE.test(t);
+    return PLAIN_NUMBER.test(t) || PERCENTAGE.test(t);
+  });
+  if (!ok) return null;
+  if (legacy && !hsl) {
+    const percentages = args.slice(0, 3).filter((t) => t.endsWith('%')).length;
+    if (percentages !== 0 && percentages !== 3) return null;
+  }
+  return args;
 }
 
 /** True when a colour certainly paints with full alpha. Anything unrecognised counts as not opaque. */
@@ -347,7 +377,10 @@ export type RenderResult = {
   gradient: Gradient | null;
 };
 
-export type Approximation = 'radial-geometry' | 'gradient-under-border';
+export type Approximation =
+  | 'radial-geometry'
+  | 'gradient-under-border'
+  | 'translucent-stops';
 
 /**
  * Compose the SVG the editor's export zone would contain: a 512x512 canvas,
@@ -362,6 +395,10 @@ export function renderSvg(spec: LogoSpec, icon: IconItem): RenderResult {
     approximations.push('radial-geometry');
   if (gradient && spec.borderWidth > 0 && !isOpaqueColor(spec.borderColor))
     approximations.push('gradient-under-border');
+  // CSS blends gradient stops in premultiplied alpha, SVG does not: between a
+  // colour and a see-through stop the SVG passes through darker or greyer tones.
+  if (gradient?.stops.some((s) => !isOpaqueColor(s.color)))
+    approximations.push('translucent-stops');
   const backgroundApproximated = approximations.length > 0;
 
   const bw = spec.borderWidth;
@@ -441,6 +478,9 @@ export function renderSvg(spec: LogoSpec, icon: IconItem): RenderResult {
   };
 }
 
+/** Thrown when the native rasteriser cannot be loaded, as opposed to failing on an input. */
+export class RasteriserLoadError extends Error {}
+
 /** Rasterise an SVG string to PNG bytes at the given edge length. Loads resvg lazily. */
 export async function renderPng(
   svg: string,
@@ -453,10 +493,13 @@ export async function renderPng(
       throw new Error('simulated load failure');
     mod = await import('@resvg/resvg-js');
   } catch (error) {
-    throw new Error(
+    throw new RasteriserLoadError(
       `PNG output needs @resvg/resvg-js, which failed to load on this platform: ${(error as Error).message}`,
     );
   }
+  // Test hook: simulate the rasteriser rejecting the document it was given.
+  if (process.env.JUST_LOGO_FAIL_RASTER === '1')
+    throw new Error('simulated raster failure');
   const resvg = new mod.Resvg(svg, { fitTo: { mode: 'width', value: size } });
   return resvg.render().asPng();
 }

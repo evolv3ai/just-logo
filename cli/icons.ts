@@ -55,7 +55,13 @@ export type SearchHit = {
   score: number;
 };
 
-/** Fuzzy search over icon names with the same library the editor uses. */
+/**
+ * Fuzzy search over icon names with the same library the editor uses. Fuse
+ * scores every name that contains the query the same, so ties would fall back
+ * to list order and bury `star` under `align-start`. Ties are broken the way a
+ * person expects: the exact name first, then names starting with the query,
+ * then shorter names.
+ */
 export function searchIcons(
   query: string,
   options: { set?: string; limit?: number } = {},
@@ -68,18 +74,41 @@ export function searchIcons(
     ignoreLocation: true,
     includeScore: true,
   });
-  return fuse.search(query, { limit }).map(({ item, score }) => ({
-    id: `${item.set}:${item.name}`,
-    set: item.set,
-    name: item.name,
-    score: Number((score ?? 0).toFixed(4)),
-  }));
+  const wanted = query.trim().toLowerCase().replace(/\s+/g, '-');
+  const rank = (name: string) =>
+    name === wanted ? 0 : name.startsWith(wanted) ? 1 : 2;
+  return fuse
+    .search(query)
+    .map(({ item, score }, index) => ({
+      item,
+      index,
+      score: Number((score ?? 0).toFixed(4)),
+    }))
+    .sort(
+      (a, b) =>
+        Number(b.item.name === wanted) - Number(a.item.name === wanted) ||
+        a.score - b.score ||
+        rank(a.item.name) - rank(b.item.name) ||
+        a.item.name.length - b.item.name.length ||
+        a.index - b.index,
+    )
+    .slice(0, limit)
+    .map(({ item, score }) => ({
+      id: `${item.set}:${item.name}`,
+      set: item.set,
+      name: item.name,
+      score,
+    }));
 }
 
-/** A standalone SVG of the bare icon, useful for previewing a search hit. */
+/**
+ * A standalone SVG of the bare icon, useful for previewing a search hit. Same
+ * attributes as the editor's picker thumbnail: the stroke is what makes icons
+ * whose own fill was stripped (tabler's `-filled` ones) visible at all.
+ */
 export function bareIconSvg(icon: IconItem, size = 24): string {
   return (
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="${size}" height="${size}" ` +
-    `color="#000" stroke-width="2" fill="none">${icon.body}</svg>`
+    `color="#000" stroke="currentColor" stroke-width="2" fill="none">${icon.body}</svg>`
   );
 }

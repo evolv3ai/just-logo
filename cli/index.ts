@@ -17,7 +17,7 @@ import {
   parseIconId,
   searchIcons,
 } from './icons';
-import { renderPng, renderSvg } from './render';
+import { RasteriserLoadError, renderPng, renderSvg } from './render';
 import {
   CONTROL_CHARACTERS,
   layerSpec,
@@ -326,7 +326,9 @@ async function runRender(argv: string[], json: boolean): Promise<void> {
     process.stderr.write(
       reason === 'radial-geometry'
         ? 'warning: radial gradient approximated: shape, size and position are ignored and negative stop positions are clamped; rendered centred\n'
-        : 'warning: gradient approximated: the border colour is not opaque, and the gradient is not repeated under the border as CSS would\n',
+        : reason === 'translucent-stops'
+          ? 'warning: gradient approximated: a stop is not opaque, and SVG blends towards it differently from CSS (the blend can look darker)\n'
+          : 'warning: gradient approximated: the border colour is not opaque, and the gradient is not repeated under the border as CSS would\n',
     );
   }
 
@@ -335,9 +337,16 @@ async function runRender(argv: string[], json: boolean): Promise<void> {
     try {
       bytes = await renderPng(result.svg, spec.pngSize);
     } catch (error) {
+      const reason = safe((error as Error).message, 300);
+      if (error instanceof RasteriserLoadError)
+        fail(
+          `PNG rasteriser unavailable: ${reason}`,
+          'run pnpm install in the just-logo checkout, or use --format svg',
+        );
+      // Loaded, but it rejected this document: reinstalling would not help.
       fail(
-        `PNG rasteriser unavailable: ${safe((error as Error).message, 300)}`,
-        'run pnpm install in the just-logo checkout, or use --format svg',
+        `PNG rendering failed: ${reason}`,
+        `just-logo render --icon ${spec.icon} --format=svg  # the SVG still renders; check the colours and background`,
       );
     }
   } else {
@@ -389,7 +398,7 @@ async function runRender(argv: string[], json: boolean): Promise<void> {
     json,
     summary,
     () =>
-      `wrote ${summary.out} (${format}, ${size}x${size}, ${summary.bytes} bytes)`,
+      `wrote ${safe(summary.out, 4096)} (${format}, ${size}x${size}, ${summary.bytes} bytes)`,
   );
 }
 
@@ -533,7 +542,7 @@ main(process.argv.slice(2)).catch((error: unknown) => {
   const help = isCli
     ? error.help
     : ambiguous
-      ? process.argv[2] === 'render'
+      ? process.argv.slice(2).find((a) => a !== '--json') === 'render'
         ? 'just-logo render --icon lucide:rocket --rotate=-15  # negative values need the = form'
         : 'just-logo icons search rocket --limit=5  # --limit must be a whole number of 1 or more'
       : 'just-logo --help';

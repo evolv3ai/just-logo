@@ -218,6 +218,28 @@ describe('parseGradient (AC4)', () => {
     expect(parseGradient('radial-gradient(#000, notacolour)')).toBeNull();
   });
 
+  it('accepts a unitless zero angle and any letter case in the function name', () => {
+    const up = linear('linear-gradient(0, #000, #fff)');
+    expect([up.x1, up.y1, up.x2, up.y2]).toEqual([0.5, 1, 0.5, 0]);
+    expect(up.stops).toHaveLength(2); // the 0 was the angle, not a stop
+    // a unitless non-zero number is not an angle, and not a colour either
+    expect(parseGradient('linear-gradient(90, #000, #fff)')).toBeNull();
+    const mixed = linear('Linear-Gradient(90DEG, #000, #fff)');
+    expect([mixed.x1, mixed.y1, mixed.x2, mixed.y2]).toEqual([0, 0.5, 1, 0.5]);
+    expect(parseGradient('RADIAL-GRADIENT(#000, #fff)')?.kind).toBe('radial');
+  });
+
+  it('does not repair a gradient with a trailing, leading or doubled comma', () => {
+    for (const bad of [
+      'linear-gradient(90deg, red, blue,)',
+      'linear-gradient(90deg, red,, blue)',
+      'linear-gradient(, red, blue)',
+      'radial-gradient(red, blue,)',
+      'linear-gradient()',
+    ])
+      expect(parseGradient(bad), bad).toBeNull();
+  });
+
   it('returns null for a plain colour so it passes through untouched', () => {
     expect(parseGradient('#ffffff')).toBeNull();
     expect(parseGradient('rgba(1,2,3,0.4)')).toBeNull();
@@ -287,6 +309,24 @@ describe('renderSvg (AC3)', () => {
       '<path d="M0 0h512v512h-512zM16 16h480v480h-480z" fill="rgba(0, 0, 0, 0.5)" fill-rule="evenodd"/>',
     );
     expect(backgroundApproximated).toBe(false);
+  });
+
+  it('reports a gradient with a see-through stop as approximated, since SVG blends it differently', () => {
+    const render = (background: string) =>
+      renderSvg(resolveSpec({ icon: 'lucide:rocket', background }), rocket);
+    for (const bg of [
+      'linear-gradient(red, transparent)',
+      'linear-gradient(90deg, #ff0000, #ff000000)',
+      'radial-gradient(rgba(0, 0, 0, 0.5), #fff)',
+    ]) {
+      const r = render(bg);
+      expect(r.approximations, bg).toEqual(['translucent-stops']);
+      expect(r.backgroundApproximated, bg).toBe(true);
+      expect(r.backgroundPassthrough, bg).toBe(false);
+    }
+    const opaque = render('linear-gradient(red, #0000ffff)');
+    expect(opaque.approximations).toEqual([]);
+    expect(opaque.backgroundApproximated).toBe(false);
   });
 
   it('reports a gradient under a border that is not opaque as approximated', () => {
@@ -449,6 +489,29 @@ describe('renderSvg (AC3)', () => {
     expect(isPlainColor('rgb(255 0 0 / 50%)')).toBe(true);
     expect(isPlainColor('hsl(120deg 50% 50%)')).toBe(true);
     expect(isPlainColor('rgb(1,2,3)) onerror=x')).toBe(false);
+    // the two CSS syntaxes are not mixed, and units go only where CSS allows them
+    for (const bad of [
+      'rgb(1, 2, 3 / 0.5)', // comma form with a slash
+      'rgb(1 2 3 0.5)', // space form needs the slash for alpha
+      'rgb(none, 1, 2)', // none is modern-only
+      'rgb(1,,2,3)',
+      'rgb(1deg 2 3)', // angles are for hues
+      'rgb(10%, 2, 3)', // legacy rgb: all numbers or all percentages
+      'hsl(10, 50, 50)', // legacy hsl needs percentages
+      'hsl(10 50% 50% / 1 2)',
+    ])
+      expect(isPlainColor(bad), bad).toBe(false);
+    for (const good of [
+      'rgb(10%, 20%, 30%)',
+      'rgba(1, 2, 3, 50%)',
+      'hsl(10, 50%, 50%)',
+      'hsla(10deg, 50%, 50%, 0.5)',
+      'hsl(10 50 50)',
+      'rgb(none 1 2 / none)',
+    ])
+      expect(isPlainColor(good), good).toBe(true);
+    // currentcolor has no meaning in a standalone file: passed through and reported
+    expect(isPlainColor('currentColor')).toBe(false);
     // functional colours need three channels and at most one alpha
     for (const bad of [
       'rgb(1)',

@@ -60,7 +60,7 @@ describe('spec schema (AC8)', () => {
               errs.push(`${k}: pattern`);
             if (p.enum && !p.enum.includes(v)) errs.push(`${k}: enum`);
           }
-        } else {
+        } else if (p.type === 'number' || p.type === 'integer') {
           if (typeof v !== 'number') errs.push(`${k}: type`);
           else {
             if (p.type === 'integer' && !Number.isInteger(v))
@@ -70,10 +70,45 @@ describe('spec schema (AC8)', () => {
             if (p.maximum !== undefined && v > p.maximum)
               errs.push(`${k}: maximum`);
           }
+        } else {
+          errs.push(`${k}: unsupported schema type ${p.type}`);
         }
       }
       return errs;
     };
+    // the checker above only knows these keywords and types, so the schema may use no others
+    const KEYWORDS = [
+      'type',
+      'minimum',
+      'maximum',
+      'enum',
+      'pattern',
+      'minLength',
+      'maxLength',
+      'default',
+      'description',
+    ];
+    for (const [k, p] of Object.entries(schema.properties)) {
+      expect(['string', 'number', 'integer'], k).toContain(p.type);
+      for (const keyword of Object.keys(p))
+        expect(KEYWORDS, `${k}.${keyword}`).toContain(keyword);
+      if (p.pattern) expect(() => new RegExp(p.pattern!, 'u'), k).not.toThrow();
+      if (p.type !== 'string')
+        expect(
+          [p.minLength, p.maxLength, p.pattern, p.enum],
+          `${k}: string keywords on a number`,
+        ).toEqual([undefined, undefined, undefined, undefined]);
+    }
+    expect(Object.keys(specSchema()).sort()).toEqual([
+      '$id',
+      '$schema',
+      'additionalProperties',
+      'description',
+      'properties',
+      'required',
+      'title',
+      'type',
+    ]);
     expect(check({ icon: 'lucide:rocket', ...DEFAULT_SPEC })).toEqual([]);
     const samples: Record<string, unknown>[] = [
       { icon: 'lucide:rocket' },
@@ -204,6 +239,16 @@ describe('spec schema (AC8)', () => {
     expect(specSchema().properties.icon.maxLength).toBe(512);
   });
 
+  it('counts the 512 limit in code points, as JSON Schema does', () => {
+    const astral = '\u{1F680}'; // one code point, two UTF-16 units
+    expect(
+      validateSpec({ icon: 'lucide:rocket', background: astral.repeat(512) }),
+    ).toEqual([]);
+    expect(
+      validateSpec({ icon: 'lucide:rocket', background: astral.repeat(513) }),
+    ).toHaveLength(1);
+  });
+
   it('rejects non-objects', () => {
     expect(validateSpec([])).toHaveLength(1);
     expect(validateSpec('x')).toHaveLength(1);
@@ -244,11 +289,15 @@ describe('resolveSpec', () => {
   it('layers defaults, then preset, then explicit values', () => {
     const spec = resolveSpec({
       icon: 'lucide:rocket',
-      preset: 'Dark Mode',
+      preset: 'Ocean Breeze',
       fillColor: '#123',
     });
-    expect(spec.strokeColor).toBe('#ffffff'); // from preset
-    expect(spec.background).toBe('#000000'); // from preset
+    // Ocean Breeze differs from the defaults in every value it sets
+    expect(spec.strokeColor).toBe('#ffffff'); // from preset (default is #fff)
+    expect(spec.background).toBe(
+      'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+    ); // from preset
+    expect(spec.borderColor).toBe('#667eea'); // from preset
     expect(spec.fillColor).toBe('#123'); // explicit wins
     expect(spec.size).toBe(DEFAULT_SPEC.size); // default
   });
