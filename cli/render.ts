@@ -100,6 +100,34 @@ export function parseGradient(background: string): Gradient | null {
   };
 }
 
+/** The CSS named colours, so a bare word is only treated as a colour when it is one. */
+const NAMED_COLORS = new Set(
+  (
+    'aliceblue antiquewhite aqua aquamarine azure beige bisque black blanchedalmond blue blueviolet brown burlywood ' +
+    'cadetblue chartreuse chocolate coral cornflowerblue cornsilk crimson cyan darkblue darkcyan darkgoldenrod darkgray ' +
+    'darkgreen darkgrey darkkhaki darkmagenta darkolivegreen darkorange darkorchid darkred darksalmon darkseagreen ' +
+    'darkslateblue darkslategray darkslategrey darkturquoise darkviolet deeppink deepskyblue dimgray dimgrey dodgerblue ' +
+    'firebrick floralwhite forestgreen fuchsia gainsboro ghostwhite gold goldenrod gray green greenyellow grey honeydew ' +
+    'hotpink indianred indigo ivory khaki lavender lavenderblush lawngreen lemonchiffon lightblue lightcoral lightcyan ' +
+    'lightgoldenrodyellow lightgray lightgreen lightgrey lightpink lightsalmon lightseagreen lightskyblue lightslategray ' +
+    'lightslategrey lightsteelblue lightyellow lime limegreen linen magenta maroon mediumaquamarine mediumblue ' +
+    'mediumorchid mediumpurple mediumseagreen mediumslateblue mediumspringgreen mediumturquoise mediumvioletred ' +
+    'midnightblue mintcream mistyrose moccasin navajowhite navy oldlace olive olivedrab orange orangered orchid ' +
+    'palegoldenrod palegreen paleturquoise palevioletred papayawhip peachpuff peru pink plum powderblue purple ' +
+    'rebeccapurple red rosybrown royalblue saddlebrown salmon sandybrown seagreen seashell sienna silver skyblue ' +
+    'slateblue slategray slategrey snow springgreen steelblue tan teal thistle tomato transparent turquoise violet wheat ' +
+    'white whitesmoke yellow yellowgreen currentcolor'
+  ).split(' '),
+);
+
+/** True for the background forms the editor's colour picker produces, or a CSS named colour. */
+export function isPlainColor(value: string): boolean {
+  const v = value.trim();
+  if (/^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(v)) return true;
+  if (/^(?:rgba?|hsla?)\(.*\)$/i.test(v)) return true;
+  return NAMED_COLORS.has(v.toLowerCase());
+}
+
 function escapeAttr(value: string): string {
   return value
     .replace(/&/g, '&amp;')
@@ -121,11 +149,7 @@ export type RenderResult = {
  */
 export function renderSvg(spec: LogoSpec, icon: IconItem): RenderResult {
   const gradient = parseGradient(spec.background);
-  const looksLikeColor =
-    /^(#[0-9a-f]{3,8}|[a-z]+|rgba?\(.*\)|hsla?\(.*\))$/i.test(
-      spec.background.trim(),
-    );
-  const backgroundPassthrough = !gradient && !looksLikeColor;
+  const backgroundPassthrough = !gradient && !isPlainColor(spec.background);
 
   const bw = spec.borderWidth;
   const side = CANVAS - spec.margin - bw;

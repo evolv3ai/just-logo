@@ -8,22 +8,28 @@ import { AVAILABLE_ICON_SETS } from '@/lib/constants';
 
 export type IconSet = (typeof AVAILABLE_ICON_SETS)[number];
 
-let cache: IconItem[] | null = null;
+const setCache = new Map<string, IconItem[]>();
 
-/** Every icon of every available set, in set order, bodies cleaned exactly as the editor does. */
+/** One set's icons, bodies cleaned exactly as the editor does. Parsed once per process. */
+export function loadSet(set: string): IconItem[] {
+  const cached = setCache.get(set);
+  if (cached) return cached;
+  if (!(AVAILABLE_ICON_SETS as readonly string[]).includes(set)) return [];
+  const data = JSON.parse(fs.readFileSync(locate(set), 'utf8')) as {
+    icons: Record<string, { body: string }>;
+  };
+  const items = Object.keys(data.icons).map((name) => ({
+    name,
+    set,
+    body: getCleanIconBody(data.icons[name].body),
+  }));
+  setCache.set(set, items);
+  return items;
+}
+
+/** Every icon of every available set, in set order. */
 export function loadIcons(): IconItem[] {
-  if (cache) return cache;
-  const all: IconItem[] = [];
-  for (const set of AVAILABLE_ICON_SETS) {
-    const data = JSON.parse(fs.readFileSync(locate(set), 'utf8')) as {
-      icons: Record<string, { body: string }>;
-    };
-    for (const name of Object.keys(data.icons)) {
-      all.push({ name, set, body: getCleanIconBody(data.icons[name].body) });
-    }
-  }
-  cache = all;
-  return all;
+  return AVAILABLE_ICON_SETS.flatMap((set) => loadSet(set));
 }
 
 export function iconSets(): readonly string[] {
@@ -35,13 +41,11 @@ export function parseIconId(id: string): { set: string; name: string } | null {
   return match ? { set: match[1], name: match[2] } : null;
 }
 
+/** Look one icon up by `<set>:<name>`, loading only that set. */
 export function findIcon(id: string): IconItem | null {
   const parsed = parseIconId(id);
   if (!parsed) return null;
-  return (
-    loadIcons().find((i) => i.set === parsed.set && i.name === parsed.name) ??
-    null
-  );
+  return loadSet(parsed.set).find((i) => i.name === parsed.name) ?? null;
 }
 
 export type SearchHit = {
@@ -57,9 +61,7 @@ export function searchIcons(
   options: { set?: string; limit?: number } = {},
 ): SearchHit[] {
   const limit = options.limit ?? 20;
-  const pool = options.set
-    ? loadIcons().filter((i) => i.set === options.set)
-    : loadIcons();
+  const pool = options.set ? loadSet(options.set) : loadIcons();
   const fuse = new Fuse(pool, {
     keys: ['name'],
     threshold: 0.3,

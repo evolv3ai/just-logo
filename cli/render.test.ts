@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { findIcon } from './icons';
-import { parseGradient, renderSvg } from './render';
+import { isPlainColor, parseGradient, renderSvg } from './render';
 import { DEFAULT_SPEC, resolveSpec } from './spec';
 
 describe('parseGradient (AC4)', () => {
@@ -127,14 +127,35 @@ describe('renderSvg (AC3)', () => {
     expect(svg).toContain('fill-opacity="0.25"');
   });
 
-  it('flags an unrecognised background as passthrough', () => {
-    const spec = resolveSpec({
-      icon: 'lucide:rocket',
-      background: 'radial-gradient(circle, #fff, #000)',
-    });
-    const { backgroundPassthrough, gradient } = renderSvg(spec, rocket);
-    expect(gradient).toBeNull();
-    expect(backgroundPassthrough).toBe(true);
+  it('flags an unrecognised background as passthrough, but not real colours', () => {
+    for (const bg of [
+      'radial-gradient(circle, #fff, #000)',
+      'bogus',
+      'url(x.png)',
+    ]) {
+      const { backgroundPassthrough, gradient } = renderSvg(
+        resolveSpec({ icon: 'lucide:rocket', background: bg }),
+        rocket,
+      );
+      expect(gradient).toBeNull();
+      expect(backgroundPassthrough).toBe(true);
+    }
+    for (const bg of [
+      '#fff',
+      '#12345678',
+      'rgba(1, 2, 3, 0.5)',
+      'hsl(10 50% 50%)',
+      'RebeccaPurple',
+      'transparent',
+    ]) {
+      expect(
+        renderSvg(
+          resolveSpec({ icon: 'lucide:rocket', background: bg }),
+          rocket,
+        ).backgroundPassthrough,
+      ).toBe(false);
+    }
+    expect(isPlainColor('#ggg')).toBe(false);
   });
 
   it('is deterministic', () => {

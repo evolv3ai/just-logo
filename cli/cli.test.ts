@@ -207,6 +207,16 @@ describe('config file and override (AC5)', () => {
     expect(JSON.parse(c.stdout).spec.strokeColor).toBe('#abcdef');
   });
 
+  it('rejects a config that is not a JSON object with exit 2', () => {
+    for (const body of ['null', '[]', '"x"']) {
+      const cfg = path.join(tmp, 'notobj.json');
+      fs.writeFileSync(cfg, body);
+      const r = run(['render', '--config', cfg, '--out', '-']);
+      expect(r.status).toBe(2);
+      expect(r.stderr).toContain('must contain a JSON object');
+    }
+  });
+
   it('rejects an invalid config with exit 2 and a schema hint', () => {
     const cfg = path.join(tmp, 'bad.json');
     fs.writeFileSync(cfg, JSON.stringify({ icon: 'tabler:heart', size: 9999 }));
@@ -301,6 +311,30 @@ describe('bin shim', () => {
     expect(r.status).toBe(0);
     expect(JSON.parse(r.stdout)).toContain('lucide');
     expect(r.stderr).not.toMatch(/^(null|error:)/m); // a clean run writes no shim message
+  });
+
+  it('still runs when invoked through a symlink, as pnpm link --global does', () => {
+    const linkDir = fs.mkdtempSync(path.join(tmp, 'link-'));
+    const link = path.join(linkDir, 'just-logo');
+    fs.symlinkSync(BIN, link);
+    const r = spawnSync(process.execPath, [link, 'icons', 'sets', '--json'], {
+      cwd: linkDir,
+      encoding: 'utf8',
+    });
+    expect(r.status).toBe(0);
+    expect(JSON.parse(r.stdout)).toContain('lucide');
+  });
+
+  it('isMain compares real paths and tolerates a missing argv[1]', async () => {
+    const { isMain } = await import('./bin.mjs');
+    const selfUrl = new URL('./bin.mjs', import.meta.url).href;
+    expect(isMain(BIN, selfUrl)).toBe(true);
+    const link = path.join(fs.mkdtempSync(path.join(tmp, 'ismain-')), 'jl');
+    fs.symlinkSync(BIN, link);
+    expect(isMain(link, selfUrl)).toBe(true);
+    expect(isMain(path.join(ROOT, 'cli', 'index.ts'), selfUrl)).toBe(false);
+    expect(isMain(undefined, selfUrl)).toBe(false);
+    expect(isMain(path.join(tmp, 'does-not-exist'), selfUrl)).toBe(false);
   });
 
   it('prints usage when invoked with no arguments', () => {

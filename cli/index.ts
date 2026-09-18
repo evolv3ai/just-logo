@@ -18,8 +18,6 @@ import {
 } from './icons';
 import { renderPng, renderSvg } from './render';
 import {
-  DEFAULT_SPEC,
-  NUMBER_RULES,
   layerSpec,
   resolveSpec,
   specSchema,
@@ -123,6 +121,17 @@ async function runRender(argv: string[], json: boolean): Promise<void> {
       fail(
         `config file is not valid JSON: ${values.config}`,
         `just-logo schema`,
+      );
+    }
+    if (
+      typeof fromConfig !== 'object' ||
+      fromConfig === null ||
+      Array.isArray(fromConfig)
+    ) {
+      fail(
+        `invalid config: ${values.config} must contain a JSON object`,
+        'just-logo schema',
+        2,
       );
     }
   }
@@ -348,12 +357,6 @@ async function main(argv: string[]): Promise<void> {
     case 'schema': {
       const schema = specSchema();
       emit(json, schema, () => JSON.stringify(schema, null, 2));
-      return;
-    }
-    case 'defaults': {
-      emit(json, { ...DEFAULT_SPEC, rules: NUMBER_RULES }, () =>
-        JSON.stringify(DEFAULT_SPEC, null, 2),
-      );
       return;
     }
     case 'render':

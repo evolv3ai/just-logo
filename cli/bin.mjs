@@ -5,9 +5,10 @@
 // --config paths resolve where the user is; tsx is pointed at this repo's
 // tsconfig so the `@/` path alias still resolves from anywhere.
 import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 
 /**
  * Map a spawn outcome to this process's exit code and an optional error text.
@@ -55,5 +56,20 @@ function main() {
   process.exit(code);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
-  main();
+/**
+ * True when this file is the program Node was started with. Node realpaths
+ * the ESM entry (import.meta.url) but leaves argv[1] as typed, so a symlinked
+ * bin (pnpm/npm global link) must be realpathed before comparing.
+ */
+export function isMain(argv1, selfUrl) {
+  if (!argv1) return false;
+  let real;
+  try {
+    real = fs.realpathSync(argv1);
+  } catch {
+    return false;
+  }
+  return real === fileURLToPath(selfUrl);
+}
+
+if (isMain(process.argv[1], import.meta.url)) main();

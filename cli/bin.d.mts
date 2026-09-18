@@ -10,3 +10,4 @@ export function exitFor(result: SpawnOutcome): {
   code: number;
   message: string | null;
 };
+export function isMain(argv1: string | undefined, selfUrl: string): boolean;
