@@ -2,18 +2,26 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 const ROOT = path.resolve(__dirname, '..');
-const TSX = path.join(ROOT, 'node_modules', '.bin', 'tsx');
+// Resolve tsx's entry and run it with the current node binary, so the tests
+// do not depend on a POSIX-only node_modules/.bin launcher.
+const TSX = createRequire(import.meta.url).resolve('tsx/cli');
+const BIN = path.join(ROOT, 'cli', 'bin.mjs');
 
 type Run = { status: number | null; stdout: string; stderr: string };
 
 function run(args: string[], cwd = ROOT): Run {
-  const result = spawnSync(TSX, ['cli/index.ts', ...args], {
-    cwd,
-    encoding: 'utf8',
-  });
+  const result = spawnSync(
+    process.execPath,
+    [TSX, path.join(ROOT, 'cli', 'index.ts'), ...args],
+    {
+      cwd,
+      encoding: 'utf8',
+    },
+  );
   return {
     status: result.status,
     stdout: result.stdout,
@@ -215,16 +223,52 @@ describe('json contract (AC7)', () => {
 });
 
 describe('bin shim', () => {
-  it('runs through cli/bin.mjs', () => {
+  it('runs through cli/bin.mjs from another directory', () => {
+    const r = spawnSync(process.execPath, [BIN, 'icons', 'sets', '--json'], {
+      cwd: tmp,
+      encoding: 'utf8',
+    });
+    expect(r.status).toBe(0);
+    expect(JSON.parse(r.stdout)).toContain('lucide');
+  });
+
+  it("resolves relative --config and --out against the caller's directory, not the repo", () => {
+    const dir = fs.mkdtempSync(path.join(tmp, 'cwd-'));
+    fs.writeFileSync(
+      path.join(dir, 'spec.json'),
+      JSON.stringify({ icon: 'lucide:star', preset: 'Sunset' }),
+    );
     const r = spawnSync(
       process.execPath,
-      [path.join(ROOT, 'cli', 'bin.mjs'), 'icons', 'sets', '--json'],
+      [BIN, 'render', '--config', 'spec.json', '--out', 'out.svg', '--json'],
+      {
+        cwd: dir,
+        encoding: 'utf8',
+      },
+    );
+    expect(r.status).toBe(0);
+    // realpath on both sides: macOS mounts the temp dir through a /private symlink
+    expect(fs.realpathSync(JSON.parse(r.stdout).out)).toBe(
+      fs.realpathSync(path.join(dir, 'out.svg')),
+    );
+    expect(fs.existsSync(path.join(dir, 'out.svg'))).toBe(true);
+    expect(fs.existsSync(path.join(ROOT, 'out.svg'))).toBe(false);
+  });
+
+  it('passes the CLI exit code through', () => {
+    const r = spawnSync(process.execPath, [BIN, 'render', '--out', '-'], {
+      cwd: tmp,
+      encoding: 'utf8',
+    });
+    expect(r.status).toBe(2);
+    const r1 = spawnSync(
+      process.execPath,
+      [BIN, 'render', '--icon', 'lucide:nope', '--out', '-'],
       {
         cwd: tmp,
         encoding: 'utf8',
       },
     );
-    expect(r.status).toBe(0);
-    expect(JSON.parse(r.stdout)).toContain('lucide');
+    expect(r1.status).toBe(1);
   });
 });

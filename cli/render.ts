@@ -45,6 +45,7 @@ const SIDE_ANGLES: Record<string, number> = {
 };
 
 function round(n: number): number {
+  // + 0 folds -0 into 0 so serialised coordinates never read "-0".
   return Number(n.toFixed(4)) + 0;
 }
 
@@ -83,9 +84,13 @@ export function parseGradient(background: string): Gradient | null {
     return { color, offset: round(Math.min(1, Math.max(0, offset))) };
   });
 
+  // CSS sizes the gradient line so the 0% and 100% points touch the box's
+  // corners: on a square box (objectBoundingBox units, 1x1) its length is
+  // |sin a| + |cos a|. A unit-length line would compress every diagonal gradient.
   const rad = (angle * Math.PI) / 180;
-  const dx = Math.sin(rad) / 2;
-  const dy = -Math.cos(rad) / 2;
+  const half = (Math.abs(Math.sin(rad)) + Math.abs(Math.cos(rad))) / 2;
+  const dx = Math.sin(rad) * half;
+  const dy = -Math.cos(rad) * half;
   return {
     x1: round(0.5 - dx),
     y1: round(0.5 - dy),

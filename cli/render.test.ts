@@ -5,15 +5,15 @@ import { parseGradient, renderSvg } from './render';
 import { DEFAULT_SPEC, resolveSpec } from './spec';
 
 describe('parseGradient (AC4)', () => {
-  it('maps a 135deg two-stop gradient to a top-left to bottom-right vector', () => {
+  it('maps a 135deg two-stop gradient corner to corner, top-left to bottom-right, like CSS', () => {
     const g = parseGradient(
       'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
     );
     expect(g).not.toBeNull();
-    expect(g!.x1).toBeCloseTo(0.1464, 3);
-    expect(g!.y1).toBeCloseTo(0.1464, 3);
-    expect(g!.x2).toBeCloseTo(0.8536, 3);
-    expect(g!.y2).toBeCloseTo(0.8536, 3);
+    expect(g!.x1).toBeCloseTo(0, 3);
+    expect(g!.y1).toBeCloseTo(0, 3);
+    expect(g!.x2).toBeCloseTo(1, 3);
+    expect(g!.y2).toBeCloseTo(1, 3);
     expect(g!.stops).toEqual([
       { color: '#667eea', offset: 0 },
       { color: '#764ba2', offset: 1 },
@@ -40,6 +40,15 @@ describe('parseGradient (AC4)', () => {
     expect(g!.x2).toBe(1);
     expect(g!.y2).toBe(0.5);
     expect(g!.stops[0].color).toBe('rgba(0, 0, 0, 0.5)');
+  });
+
+  it('keeps axis-aligned gradients at unit length and handles 45deg corner to corner', () => {
+    const right = parseGradient('linear-gradient(90deg, #000 0%, #fff 100%)')!;
+    expect([right.x1, right.y1, right.x2, right.y2]).toEqual([0, 0.5, 1, 0.5]);
+    const down = parseGradient('linear-gradient(#000, #fff)')!; // CSS default: to bottom
+    expect([down.x1, down.y1, down.x2, down.y2]).toEqual([0.5, 0, 0.5, 1]);
+    const ne = parseGradient('linear-gradient(45deg, #000, #fff)')!; // bottom-left to top-right
+    expect([ne.x1, ne.y1, ne.x2, ne.y2]).toEqual([0, 1, 1, 0]);
   });
 
   it('spaces stops evenly when no percentages are given', () => {
