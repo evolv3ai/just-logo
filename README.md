@@ -87,16 +87,16 @@ Everything the editor does, from a terminal and without a browser: search the sa
 
 After `pnpm install`, run it as `pnpm logo <command>` (or `npx tsx cli/index.ts`). `pnpm link --global` makes it available as `just-logo`.
 
-| Command                                                       | What it does                                                                                                                     |
-| ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `pnpm logo icons sets`                                        | List the icon sets.                                                                                                              |
-| `pnpm logo icons search <query> [--set <name>] [--limit <n>]` | Fuzzy-search icon names. Results carry an `id` like `lucide:rocket`.                                                             |
-| `pnpm logo icons show <set:name>`                             | Print one icon's body and a bare SVG of it.                                                                                      |
-| `pnpm logo presets`                                           | List the presets and their colours.                                                                                              |
-| `pnpm logo schema`                                            | Print the JSON schema of a render spec.                                                                                          |
-| `pnpm logo render [flags] [--config <file>]`                  | Render a logo. `--out <path>` (default `logo.svg`, `.png` switches format, `-` prints SVG to stdout). Flags override `--config`. |
+| Command                                                       | What it does                                                                                                                                                                          |
+| ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm logo icons sets`                                        | List the icon sets.                                                                                                                                                                   |
+| `pnpm logo icons search <query> [--set <name>] [--limit <n>]` | Fuzzy-search icon names. Results carry an `id` like `lucide:rocket`.                                                                                                                  |
+| `pnpm logo icons show <set:name>`                             | Print one icon's body and a bare SVG of it.                                                                                                                                           |
+| `pnpm logo presets`                                           | List the presets and their colours.                                                                                                                                                   |
+| `pnpm logo schema`                                            | Print the JSON schema of a render spec.                                                                                                                                               |
+| `pnpm logo render [flags] [--config <file>]`                  | Render a logo. `--out <path>` (default `logo.<format>`; a `.png` extension or `--format png` selects PNG, `-` prints SVG to stdout). Flags override `--config`, including `--preset`. |
 
-Render flags mirror the editor's settings: `--icon <set:name>` (required), `--preset <name>`, `--size`, `--rotate`, `--stroke-color`, `--stroke-width`, `--stroke-opacity`, `--fill-color`, `--fill-opacity`, `--background` (a colour or a CSS `linear-gradient(...)`), `--margin`, `--radius`, `--border-width`, `--border-color`, `--png-size` (default 512) and `--format svg|png`.
+Render flags mirror the editor's settings: `--icon <set:name>` (required), `--preset <name>`, `--size`, `--rotate`, `--stroke-color`, `--stroke-width`, `--stroke-opacity`, `--fill-color`, `--fill-opacity`, `--background` (a colour, a CSS `linear-gradient(...)` or `radial-gradient(...)`), `--margin`, `--radius`, `--border-width`, `--border-color`, `--png-size` (default 512) and `--format svg|png`.
 
 ### Example: an agent making a logo
 
