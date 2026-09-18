@@ -367,10 +367,14 @@ describe('flag validation', () => {
       expect(lines, args.join(' ')).toHaveLength(2);
       expect(lines[0]).toMatch(/^error: /);
       expect(lines[1]).toMatch(/^help: just-logo /);
-      // eslint-disable-next-line no-control-regex
-      expect(r.stderr).not.toMatch(
-        /[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u2028\u2029]/,
-      );
+      // no control character other than the two line feeds
+      const controls = [...r.stderr].filter((ch) => {
+        const c = ch.codePointAt(0)!;
+        return (
+          c < 0x20 || (c >= 0x7f && c <= 0x9f) || c === 0x2028 || c === 0x2029
+        );
+      });
+      expect(controls, args.join(' ')).toEqual(['\n', '\n']);
       // the help line is a fixed suggestion: none of the user's text is in it
       expect(lines[1]).not.toContain('rm -rf');
       const parsed = JSON.parse(r.stdout) as { error: string; help: string };
