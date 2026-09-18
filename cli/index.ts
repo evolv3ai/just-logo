@@ -33,7 +33,7 @@ Commands:
   icons show <set:name>              body and a bare SVG of one icon
   presets                            list presets and their colours
   schema                             JSON schema of a render spec
-  render [flags] [--config file]     render a logo (--out path, default logo.svg; --out - for stdout)
+  render [flags] [--config file]     render a logo (--out path, default logo.<format>; --out - for stdout)
 
 Render flags: --icon <set:name> --preset <name> --size --rotate --stroke-color --stroke-width
   --stroke-opacity --fill-color --fill-opacity --background --margin --radius --border-width
