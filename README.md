@@ -124,6 +124,15 @@ Errors are machine-readable too: `error: <what>` and `help: <a runnable fix>` on
 
 The CLI reuses the editor's icon cleaning and presets and composes what the editor's preview shows: the same 512 canvas, background box and icon settings, as plain SVG. (The editor's own SVG download is an `html-to-image` snapshot wrapped in a `foreignObject`, so the two files are not alike inside.) Pixel-identical parity with the browser PNG is not a goal. Where the SVG is knowingly not what the browser draws, `--json` says so with `backgroundApproximated: true` (and the reasons in `backgroundApproximations`) and stderr carries one warning per reason: a radial gradient's shape, size and position are ignored (it is drawn centred) and its negative stop positions are clamped, a gradient is not repeated under a border whose colour is not opaque, and a gradient with a see-through stop blends differently in SVG than in CSS. `icons search` puts an exact name first.
 
+### Save and load designs
+
+The editor autosaves one design per browser. To keep more than one, or to move a design between the editor and the CLI, use the two file buttons in the editor header:
+
+- **Export Settings** (`J`) downloads the current design as `logo.json`. The file is a render spec, so `pnpm logo render --config logo.json --out logo.png` draws it as is. Pick an icon first; there is nothing to render without one.
+- **Import Settings** (`I`) opens a spec file and applies it to the editor. Any file the CLI accepts works, including the `spec` object from a `render --json` result: a `preset` is applied the way the CLI applies it (explicit values win), missing values take the CLI's defaults, and `pngSize` is ignored because the editor always previews at 512. Undo brings the previous design back.
+
+Both directions use the CLI's validator (`src/lib/logo-spec.ts`), so a file the editor refuses is one the CLI refuses, with the same message. A refused import, or an icon id that is not in the editor's icon list, leaves the current design untouched.
+
 ## 📚 Using Other Icon Libraries
 
 You can expand the icon selection by adding other icon libraries supported by [Iconify](https://icon-sets.iconify.design/).

@@ -19,6 +19,8 @@ import { ThemeToggle } from '@/components/ui/theme-toggle';
 import { useEditor } from '@/components/providers/editor-provider';
 import { useHistory } from '@/components/providers/history-provider';
 
+import SettingsMenu from './settings-menu';
+
 const EditorActions = () => {
   const { data: icons } = useIcons();
   const { canRedo, canUndo, redo, undo } = useHistory();
@@ -158,6 +160,8 @@ const EditorActions = () => {
           </TooltipContent>
         </Tooltip>
       </div>
+      <Separator orientation="vertical" />
+      <SettingsMenu />
     </div>
   );
 };

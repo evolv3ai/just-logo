@@ -1,0 +1,30 @@
+{
+  "body": "Implement the spec in .adlc/specs/settings-io.md: Export settings / Import settings in the web editor, sharing the CLI's render spec JSON.\n\n1. Move the contents of cli/spec.ts verbatim to src/lib/logo-spec.ts (it imports only @/lib/constants; no Node imports). Replace cli/spec.ts with `export * from '@/lib/logo-spec';` plus the type re-exports, so every CLI import and test is unchanged. Do not edit any other file under cli/.\n2. Add src/lib/settings-io.ts, a pure module (no React, no DOM): editorToSpec(iconSettings, backgroundSettings), specToEditor(spec, icons), parseSettings(text, icons), serializeSettings(spec), MAX_SETTINGS_BYTES = 65536. Mapping: editor IconItem {set,name,body} <-> spec icon `<set>:<name>`; editor borderRadius <-> spec radius; all other fields same name and value. Export writes no preset and no pngSize, refuses icon: null, and validates its own output with validateSpec. Import = JSON.parse -> validateSpec -> resolveSpec -> icon lookup in the supplied IconItem[] -> editor settings; pngSize dropped; errors are `invalid settings: <path>: <message>; ...`, `not a JSON file`, or an unknown-icon message naming the id. Results are {ok:true,...} | {ok:false,message}.\n3. Add src/components/editor/editor-header/settings-menu.tsx: two outline icon buttons with tooltips (Export settings, hotkey J, downloads logo.json; Import settings, hotkey I, hidden file input accepting .json), rendered in src/components/editor/editor-header/editor-actions.tsx in a new separator group after Randomize and Clear. Use useEditor, useIcons and sonner toasts. Import refuses files over MAX_SETTINGS_BYTES and refuses while icons are not loaded. On ok:false nothing is applied. On success call updateIconSettings and updateBackgroundSettings with the full mapped state.\n4. Tests in src/lib/settings-io.test.ts (vitest, node environment), README section \"Save and load designs\".\n\nAcceptance criteria and the command that verifies each (all: `pnpm test`):\n- AC1 export mapping: exact expected spec, no preset/pngSize/borderRadius/body keys. src/lib/settings-io.test.ts.\n- AC2 exported file is a valid config: validateSpec(JSON.parse(serializeSettings(spec))) is empty, and `tsx cli/index.ts render --config <file> --out - --json` exits 0 with spec values equal to the exported ones. src/lib/settings-io.test.ts.\n- AC3 export refusals: icon null; size 9999 carries the validator message. src/lib/settings-io.test.ts.\n- AC4 import mapping: icon is the IconItem with body from the list; borderRadius = radius; no pngSize/preset/radius keys. src/lib/settings-io.test.ts.\n- AC5 round trip both directions. src/lib/settings-io.test.ts.\n- AC6 preset and defaults resolve as resolveSpec does; explicit colour beats preset. src/lib/settings-io.test.ts.\n- AC7 refusals: not JSON, array, unknown property, out-of-range number, bad icon format, unknown preset, icon id not in list. src/lib/settings-io.test.ts; UI applies nothing on ok:false (review + run the app).\n- AC8 one validator: validateSpec from `../../cli/spec` and from `@/lib/logo-spec` are the same function (toBe); `pnpm test` keeps the CLI suite green.\n- AC9 `pnpm build`, `pnpm exec tsc --noEmit`, `pnpm exec prettier --check <changed files>`, `pnpm test` all pass.\n- AC10 seen working in `pnpm dev` (port 3000): export -> CLI render matches preview; import changes the design; invalid file toasts and leaves the design; undo after import; randomize, clear, autosave across reload.\n- AC11 README section.",
+  "category": "feature",
+  "duration": 2,
+  "id": "T-01M2VJZEKWD38K6Q54AFX00H96",
+  "rails": [
+    "public/**",
+    "scripts/**",
+    "cli/index.ts",
+    "cli/render.ts",
+    "cli/icons.ts",
+    "cli/bin.mjs",
+    "cli/bin.d.mts",
+    "cli/*.test.ts",
+    "cli/__snapshots__/**",
+    "src/lib/constants.ts",
+    "src/types.ts",
+    "src/components/providers/**"
+  ],
+  "scope": [
+    "src/lib/logo-spec.ts",
+    "src/lib/settings-io.ts",
+    "src/lib/settings-io.test.ts",
+    "src/components/editor/editor-header/**",
+    "cli/spec.ts",
+    "README.md",
+    ".adlc/specs/settings-io.md"
+  ],
+  "title": "Add Export settings / Import settings to the editor using the CLI's render spec JSON"
+}
