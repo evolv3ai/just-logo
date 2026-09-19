@@ -11,6 +11,7 @@ import type { LogoSpec } from '@/lib/logo-spec';
 import {
   MAX_SETTINGS_BYTES,
   editorToSpec,
+  importSettingsFile,
   parseSettings,
   serializeSettings,
   specToEditor,
@@ -107,6 +108,22 @@ describe('editorToSpec', () => {
     expect(result).toEqual({
       ok: false,
       message: 'invalid settings: size: must be between 0 and 512',
+    });
+  });
+});
+
+describe('editorToSpec with a stored state that lacks fields', () => {
+  it('refuses rather than let the CLI fill the gap with its defaults', () => {
+    const { fillOpacity: _n, strokeColor: _s, ...partialIcon } = iconSettings;
+    const { borderRadius: _r, ...partialBackground } = backgroundSettings;
+    const result = editorToSpec(
+      partialIcon as IconSettings,
+      partialBackground as BackgroundSettings,
+    );
+    expect(result).toEqual({
+      ok: false,
+      message:
+        'invalid settings: strokeColor: missing; fillOpacity: missing; radius: missing',
     });
   });
 });
@@ -295,13 +312,82 @@ describe('parseSettings', () => {
   });
 });
 
+describe('importSettingsFile', () => {
+  const ready = { status: 'ready', icons } as const;
+  const text = serializeSettings(exported());
+  function fileOf(content: string, size = content.length) {
+    let reads = 0;
+    return {
+      file: {
+        size,
+        text: () => {
+          reads += 1;
+          return Promise.resolve(content);
+        },
+      },
+      reads: () => reads,
+    };
+  }
+
+  it('imports a readable file of an allowed size', async () => {
+    const { file, reads } = fileOf(text);
+    expect(await importSettingsFile(file, ready)).toEqual({
+      ok: true,
+      iconSettings,
+      backgroundSettings,
+    });
+    expect(reads()).toBe(1);
+  });
+
+  it('accepts a file of exactly the limit and refuses one byte more, unread', async () => {
+    expect(MAX_SETTINGS_BYTES).toBe(65536);
+    const atLimit = fileOf(text, MAX_SETTINGS_BYTES);
+    expect((await importSettingsFile(atLimit.file, ready)).ok).toBe(true);
+
+    const over = fileOf(text, MAX_SETTINGS_BYTES + 1);
+    expect(failure(await importSettingsFile(over.file, ready))).toBe(
+      'the file is too large',
+    );
+    expect(over.reads()).toBe(0);
+  });
+
+  it('refuses while the icon list is loading, without reading the file', async () => {
+    const { file, reads } = fileOf(text);
+    expect(failure(await importSettingsFile(file, { status: 'pending' }))).toBe(
+      'the icon list is still loading, try again in a moment',
+    );
+    expect(reads()).toBe(0);
+  });
+
+  it('says so when the icon list failed to load, which waiting will not fix', async () => {
+    const { file, reads } = fileOf(text);
+    expect(failure(await importSettingsFile(file, { status: 'error' }))).toBe(
+      'the icon list failed to load, reload the page',
+    );
+    expect(reads()).toBe(0);
+  });
+
+  it('refuses a file that cannot be read', async () => {
+    const file = {
+      size: 10,
+      text: () => Promise.reject(new Error('NotReadableError')),
+    };
+    expect(failure(await importSettingsFile(file, ready))).toBe(
+      'the file could not be read',
+    );
+  });
+
+  it('passes a parse refusal through with no settings', async () => {
+    const { file } = fileOf('{"icon":"lucide:rocket","rotate":500}');
+    expect(failure(await importSettingsFile(file, ready))).toBe(
+      'invalid settings: rotate: must be between -180 and 180',
+    );
+  });
+});
+
 describe('shared contract', () => {
   it('has one validator, whichever path imports it', () => {
     expect(cliValidateSpec).toBe(validateSpec);
-  });
-
-  it('bounds the file size the editor will read', () => {
-    expect(MAX_SETTINGS_BYTES).toBe(65536);
   });
 });
 

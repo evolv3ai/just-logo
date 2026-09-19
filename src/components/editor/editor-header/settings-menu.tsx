@@ -10,9 +10,8 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import {
-  MAX_SETTINGS_BYTES,
   editorToSpec,
-  parseSettings,
+  importSettingsFile,
   serializeSettings,
 } from '@/lib/settings-io';
 import { Kbd } from '@/components/ui/kbd';
@@ -22,7 +21,7 @@ import { useEditor } from '@/components/providers/editor-provider';
 
 const SettingsMenu = () => {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const { data: icons } = useIcons();
+  const { data: icons, isError } = useIcons();
   const {
     iconSettings,
     backgroundSettings,
@@ -56,25 +55,12 @@ const SettingsMenu = () => {
     e.target.value = '';
     if (!file) return;
 
-    if (!icons) {
-      toast.error('Icons are still loading. Try again in a moment.');
-      return;
-    }
-    if (file.size > MAX_SETTINGS_BYTES) {
-      toast.error('Import failed: the file is too large.');
-      return;
-    }
-
-    let text: string;
-    try {
-      text = await file.text();
-    } catch (error) {
-      console.error('Error reading settings file:', error);
-      toast.error('Could not read that file. Please try again.');
-      return;
-    }
-
-    const result = parseSettings(text, icons);
+    const result = await importSettingsFile(
+      file,
+      icons
+        ? { status: 'ready', icons }
+        : { status: isError ? 'error' : 'pending' },
+    );
     if (!result.ok) {
       toast.error(`Import failed: ${result.message}.`);
       return;

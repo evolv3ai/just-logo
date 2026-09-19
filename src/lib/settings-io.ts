@@ -58,6 +58,16 @@ export function editorToSpec(
     borderWidth: backgroundSettings.borderWidth,
     borderColor: backgroundSettings.borderColor,
   };
+  // validateSpec reads an undefined value as "absent", and JSON.stringify
+  // would drop the key, so the CLI would fill it from its own defaults and
+  // draw something other than the preview. A stored state can lack a field
+  // (hand-edited localStorage), so that is refused here.
+  const missing = Object.entries(spec)
+    .filter(([, value]) => value === undefined)
+    .map(([key]) => `${key}: missing`);
+  if (missing.length > 0) {
+    return { ok: false, message: `invalid settings: ${missing.join('; ')}` };
+  }
   const message = invalid(spec);
   return message ? { ok: false, message } : { ok: true, spec };
 }
@@ -115,4 +125,46 @@ export function parseSettings(
 
 export function serializeSettings(spec: SettingsSpec): string {
   return `${JSON.stringify(spec, null, 2)}\n`;
+}
+
+/** The part of a browser `File` that import needs; a plain object in tests. */
+export type SettingsFile = { size: number; text: () => Promise<string> };
+
+/** Where the editor's icon list stands (see use-icons.ts). */
+export type IconList =
+  | { status: 'pending' }
+  | { status: 'error' }
+  | { status: 'ready'; icons: ReadonlyArray<IconItem> };
+
+/**
+ * Every decision import makes, so the component only shows the message or
+ * applies the settings. The file is not read when it is too large or when
+ * there is no icon list to look its icon up in.
+ */
+export async function importSettingsFile(
+  file: SettingsFile,
+  iconList: IconList,
+): Promise<ImportResult> {
+  if (iconList.status === 'pending') {
+    return {
+      ok: false,
+      message: 'the icon list is still loading, try again in a moment',
+    };
+  }
+  if (iconList.status === 'error') {
+    return {
+      ok: false,
+      message: 'the icon list failed to load, reload the page',
+    };
+  }
+  if (file.size > MAX_SETTINGS_BYTES) {
+    return { ok: false, message: 'the file is too large' };
+  }
+  let text: string;
+  try {
+    text = await file.text();
+  } catch {
+    return { ok: false, message: 'the file could not be read' };
+  }
+  return parseSettings(text, iconList.icons);
 }
